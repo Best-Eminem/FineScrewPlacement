@@ -30,17 +30,17 @@ parser.add_argument('--cfg', type=str, default = None,
 args = parser.parse_args()
 
 ## Functions to build
-def build_data_load(dataDir, pedicle_points,pedicle_points_in_zyx):
-    logger.info("build spine data")
-    spine_data, spacing = get_spinedata(dataDir, pedicle_points,pedicle_points_in_zyx)
+def build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx):
+    logger.info("-------------------build spine data----------------------")
+    spine_data, spacing = get_spinedata(dataDir, pedicle_points,pedicle_points_in_zyx) #160，98，48 xyz
     # cfg.Env.step.line_rd = float(max(cfg.Env.step.line_rd, spacing)) # 根据spacing修改计算直线长度时的直线半径。
-    logger.info("build data done")
+    logger.info("-------------------build data done-----------------------")
     return spine_data # namedtuple:
 
 def build_Env(spine_data):
-    logger.info("build env")
+    logger.info("-------------------build env-----------------------------")
     env = SingleSpineEnv.SpineEnv(spine_data)
-    logger.info("build env done")
+    logger.info("-------------------build env done------------------------")
     return env
 
 def build_exper_pool(capacity = 1e6):
@@ -111,7 +111,7 @@ def build_opt_lr(pnet, qnet):
 
 def policy_action(state, env, policy_net): # state is tensor
     with torch.no_grad():
-        action = env.action_space.high[0] * policy_net(state)
+        action = env.action_space.high[0] * policy_net(state) 
     return action
 
 def explore_one_step(env, state, experience_pool, policy_net):
@@ -122,10 +122,10 @@ def explore_one_step(env, state, experience_pool, policy_net):
             action = torch.clamp(action, min=env.action_space.low[0], max=env.action_space.high[0])
         return action
     action = explore_action()
-    obs, r, done, other = env.step(action.numpy())
+    _state, r, done, other = env.step(action.numpy()) #return state_, reward, done, {'len_delta': len_delta, 'radius_delta': radius_delta}
     reward = torch.tensor(r, dtype=torch.float)  # r
-    # next_state = torch.tensor(np.concatenate(np.asarray(obs)), dtype=torch.float)  # s'
-    next_state = torch.tensor(obs, dtype=torch.float)
+    # next_state = torch.tensor(np.concatenate(np.asarray(_state)), dtype=torch.float)  # s'
+    next_state = torch.tensor(_state, dtype=torch.float)
     terminal = torch.tensor(int(done) * 1.0, dtype=torch.float)  # t
     # Store the transition in experience pool
     experience_pool.push(state, action, reward, next_state, terminal)  # (s,a,r,s',t), tensors
@@ -200,7 +200,7 @@ def train(env,policy_net, q_net, target_p_net, target_q_net, experience_pool, op
         explore_steps = 0
         reward = 0
         # Initialize the environment and state
-        state = torch.tensor(env.reset(), dtype=torch.float)
+        state = torch.tensor(env.reset(), dtype=torch.float32)
         while explore_steps < cfg.Train.EPOCH_STEPS:
             explore_steps += 1
             done, next_state, r = explore_one_step(env, state, experience_pool, policy_net)
@@ -270,17 +270,16 @@ def main():
         add_file_handler('global',
                          os.path.join(cfg.Train.LOG_DIR, 'logs.txt'),
                          logging.INFO)
-    logger.info("config \n {}".format(json.dumps(cfg, indent=4)))
+    # logger.info("config \n {}".format(json.dumps(cfg, indent=4)))
     tb_writer = SummaryWriter(cfg.Train.LOG_DIR)
     
     #####-------注意，本例中，mask_array与坐标的排列方式均采用x,y,z形式来计算，zyx形式的要转换为xyz形式-----------------##### 
     
     '''---1 Data Preprocess    ---'''
     dataDir = r'./spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz'
-    pedicle_points = np.asarray([[20,20,20],[20,20,40]])
+    pedicle_points = np.asarray([[25,56,69],[25,57,111]])
     pedicle_points_in_zyx = True #坐标是zyx形式吗？
-    #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
-    spine_data = build_data_load(dataDir, pedicle_points,pedicle_points_in_zyx) 
+    spine_data = build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx) #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
     '''---2 Build Environment  ---'''
     env = build_Env(spine_data)  # 只修改了初始化函数，其他函数待修改
     '''---3 Build Networks     ---'''

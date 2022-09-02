@@ -14,7 +14,7 @@ def coorSpace2LngLat(ppoint, R=None):
     return np.arcsin(ppoint[2] / R), np.arctan(ppoint[1] / ppoint[0])
 
 def coorLngLat2Space(angles, R=1., default = True):
-    """经纬度变为空间坐标 先是纬度 再是经度
+    """返回旋转后的方向向量
 
     Args:
         angles (_type_): (Lat, Lng), rad
@@ -24,9 +24,9 @@ def coorLngLat2Space(angles, R=1., default = True):
     Returns:
         Output: ppoint(x,y,z)
     """
-    x = R * np.cos(np.deg2rad(angles[0])) * np.cos(np.deg2rad(angles[1]))
-    y = R * np.cos(np.deg2rad(angles[0])) * np.sin(np.deg2rad(angles[1]))
-    z = R * np.sin(np.deg2rad(angles[0]))
+    x = R * np.cos(np.deg2rad(angles[1])) * np.sin(np.deg2rad(angles[0]))
+    y = R * np.cos(np.deg2rad(angles[1])) * np.cos(np.deg2rad(angles[0]))
+    z = R * np.sin(np.deg2rad(angles[1]))
     if default:
         if x>=0:
             x = -x
@@ -142,7 +142,7 @@ def lineInVerterbra(spine_xyz,spine, start_point, end_point, dist, radiu_thres=N
         dist_[0:radiu_thres[0], :, :] = np.inf
         dist_[radiu_thres[1] + 1:, :, :] = np.inf
     #dist_ = dist_[start_point[0]:end_point[0]+1,:,:]
-    max_radius = np.min(dist_)
+    max_radius = 1#np.min(dist_)
     # 以下用于可视化验证
     ppp = np.where(dist_ == max_radius)
     return max_radius, line_len, (ppp[0],ppp[1],ppp[2])
