@@ -2,12 +2,16 @@ import cv2
 import os
 import glob
 import imageio
+import platform
 # glob.glob(r"E:/Picture/*/*.jpg")
 
 def images_to_video(path, suffix, isDelete=False, savename =None):
     img_array = []
     imgList = glob.glob(os.path.join(path,suffix))
-    imgList.sort(key = lambda x: int(x.split('\\')[-1].split('.')[0].split('_')[-1])) # sorted by name
+    if platform.system() == 'Windows':
+        imgList.sort(key = lambda x: int(x.split('\\')[-1].split('.')[0].split('_')[-1])) # sorted by name
+    else: 
+        imgList.sort(key = lambda x: int(x.split('/')[-1].split('.')[0].split('_')[-1])) # sorted by name
     for filename in imgList:
         img = cv2.imread(filename)
         if img is None:

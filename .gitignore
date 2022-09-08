@@ -6,3 +6,4 @@ test/
 logs/
 imgs/
 snapshot/
+**/*.log

@@ -83,10 +83,11 @@ class SpineEnv(gym.Env):
         init_degree = self.computeInitDegree()
         init_cpoint = self.computeInitCPoint()
         dire_vector = utils3.coorLngLat2Space(init_degree) #螺钉方向向量
-        self.dist_mat = utils3.spine2line(self.mask_coards, self.mask_array, init_cpoint, dire_vector)
+        self.dist_mat_point = utils3.spine2point(self.mask_coards, self.mask_array, init_cpoint)
+        self.dist_mat_line = utils3.spine2line(self.mask_coards, self.mask_array, init_cpoint, dire_vector)
         self.pre_max_radius, self.pre_line_len, self.endpoints = utils3.getLenRadiu \
             (self.mask_coards, self.mask_array, init_cpoint, dire_vector, R=1, line_thres=self.line_thres,
-             radiu_thres=self.radiu_thres, dist=self.dist_mat)
+             radiu_thres=self.radiu_thres, point_dist=self.dist_mat_point, line_dist=self.dist_mat_line)
         # self.state = np.concatenate([[self.pre_max_radius], init_degree, init_cpoint])
         state_list = [self.pre_max_radius, self.pre_line_len]
         state_list.extend(init_degree)
@@ -127,13 +128,14 @@ class SpineEnv(gym.Env):
         # step forward
         this_degree = self.stepPhysics(rotate_deg, delta_cpoint = None)
         this_dirpoint = utils3.coorLngLat2Space(this_degree, R=1., default = True)
-        self.dist_mat = utils3.spine2line(self.mask_coards, self.mask_array, self.centerPointL, this_dirpoint)
+        self.dist_mat_point = utils3.spine2point(self.mask_coards, self.mask_array, self.centerPointL)
+        self.dist_mat_line = utils3.spine2line(self.mask_coards, self.mask_array, self.centerPointL, this_dirpoint)
         max_radius, line_len, self.endpoints = utils3.getLenRadiu(self.mask_coards, self.mask_array, self.centerPointL,
                                                                   this_dirpoint, R=1,
                                                                   line_thres=self.line_thres,
-                                                                  radiu_thres=self.radiu_thres, dist=self.dist_mat)
+                                                                  radiu_thres=self.radiu_thres, point_dist=self.dist_mat_point, line_dist=self.dist_mat_line)
         
-        state_list = [self.pre_max_radius, self.pre_line_len]
+        state_list = [max_radius, line_len]
         state_list.extend(this_degree)
         self.state = np.asarray(state_list, dtype=np.float32)
         if max_radius <= 0.: # todo 仍需要再思考
@@ -200,13 +202,16 @@ class SpineEnv(gym.Env):
             # ax2.text(2, -18, '#action_x:' + '%.4f' % info['action'][2], color='red', fontsize=10)
             # ax2.text(2, -10, '#action_y:' + '%.4f' % info['action'][3], color='red', fontsize=10)
             # ax2.text(2, -2, '#action_z:' + '%.4f' % info['action'][4], color='red', fontsize=10)
-            ax3.text(2, -9, '#Reward:' + '%.4f' % info['r'], color='red', fontsize=5)
-            ax3.text(2, -2, '#TotalR:' + '%.4f' % info['reward'], color='red', fontsize=5)
-            ax3.text(2, 110, '#frame:%.4d' % info['frame'], color='red', fontsize=5)
-            ax2.text(2, 110, '#radius:' + '%.4f' % self.state[0], color='red', fontsize=5)
+            ax3.text(2, -30, '#Reward:' + '%.4f' % info['r'], color='red', fontsize=20)
+            ax3.text(2, -2, '#TotalR:' + '%.4f' % info['reward'], color='red', fontsize=20)
+            ax3.text(2, 110, '#frame:%.4d' % info['frame'], color='red', fontsize=20)
+            ax2.text(2, 110, '#radius:' + '%.4f' % self.state[0], color='red', fontsize=20)
+            ax2.text(2, 140, '#length:' + '%.4f' % self.state[1], color='red', fontsize=20)
 
         if is_save_gif:
-            fig.savefig(img_save_path + '/Epoch%d_%d.jpg' % (info['epoch'], info['frame']))
+            if info is not None:
+                fig.savefig(img_save_path + '/Epoch%d_%d.jpg' % (info['epoch'], info['frame']))
+            else: fig.savefig(img_save_path + '/Epoch_{}.jpg'.format('test'))
 
         if is_vis:
             plt.show()

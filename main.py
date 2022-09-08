@@ -204,6 +204,8 @@ def train(env,policy_net, q_net, target_p_net, target_q_net, experience_pool, op
         while explore_steps < cfg.Train.EPOCH_STEPS:
             explore_steps += 1
             done, next_state, r = explore_one_step(env, state, experience_pool, policy_net)
+            # fig = plt.figure()
+            # fig = env.render_(fig, None, **cfg.Evaluate)
             state = next_state
             reward += r #
             # perfrom one step of the optimization

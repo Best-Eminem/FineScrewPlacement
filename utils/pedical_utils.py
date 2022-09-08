@@ -67,7 +67,7 @@ def spine2line(spine_xyz, spine, cpoint, dirpoint):
     dist_mat = np.sqrt(dist_mat)
     return dist_mat
 
-def getEndpoint(spine_xyz, spine, cpoint, dirvector, R=0.8, line_thres=None, dist=None):
+def getEndpoint(spine_xyz, spine, cpoint, dirvector, R=0.8, line_thres=None, point_dist=None, line_dist=None):
     '''
     计算直线两端点坐标
     Input:
@@ -78,9 +78,9 @@ def getEndpoint(spine_xyz, spine, cpoint, dirvector, R=0.8, line_thres=None, dis
         - threshold:[ymin,ymax]
         - dist:
     '''
-    if dist is None:
-        dist = spine2line(spine_xyz, spine, cpoint, dirvector)
-    dist_ = spine + np.where(dist>R, 0, 2)
+    if point_dist is None: point_dist = spine2point(spine_xyz, spine, cpoint)
+    if line_dist is None: line_dist = spine2line(spine_xyz, spine, cpoint, dirvector)
+    dist_ = spine + np.where(line_dist>R, 0, 2)
     if line_thres is not None:
         # Todo 如果后面需要排除尾部
         dist_[0:line_thres[0], :, :] = 0
@@ -115,7 +115,7 @@ def getEndpoint(spine_xyz, spine, cpoint, dirvector, R=0.8, line_thres=None, dis
     return start_point, end_point
 
 
-def lineInVerterbra(spine_xyz,spine, start_point, end_point, dist, radiu_thres=None):
+def lineInVerterbra(spine_xyz,spine, start_point, end_point, point_dist, line_dist, radiu_thres=None):
     """_summary_
 
     Args:
@@ -135,25 +135,26 @@ def lineInVerterbra(spine_xyz,spine, start_point, end_point, dist, radiu_thres=N
     line_len = distEuclid(spine_xyz[:,start_point[0],start_point[1],start_point[2]],
                           spine_xyz[:,end_point[0],end_point[1],end_point[2]])
 
-    dist_ = copy.deepcopy(dist)
+    dist_ = copy.deepcopy(point_dist)
     dist_[np.where(spine==1)] = np.inf
     if radiu_thres is not None:
         # Todo 如果后面需要排除尾部的
         dist_[0:radiu_thres[0], :, :] = np.inf
         dist_[radiu_thres[1] + 1:, :, :] = np.inf
     #dist_ = dist_[start_point[0]:end_point[0]+1,:,:]
-    max_radius = 1#np.min(dist_)
+    max_radius = np.min(dist_)
     # 以下用于可视化验证
-    ppp = np.where(dist_ == max_radius)
+    line_dist[np.where(spine<1)] = np.inf
+    ppp = np.where(line_dist <= max_radius)
     return max_radius, line_len, (ppp[0],ppp[1],ppp[2])
 
-def getLenRadiu(spine_xyz, spine, cpoint, dirvector, R=0.8, line_thres=None, radiu_thres = None, dist=None):
+def getLenRadiu(spine_xyz, spine, cpoint, dirvector, R=0.8, line_thres=None, radiu_thres = None, point_dist=None, line_dist=None):
     # 计算
     # radiu_thres is used to truncate x axis of the start/end point
-    if dist is None:
-        dist = spine2line(spine_xyz, spine, cpoint, dirvector)
-    start_point, end_point = getEndpoint(spine_xyz, spine, cpoint, dirvector, R=R, line_thres= line_thres, dist=dist)
-    max_radius, line_len, radiu_p = lineInVerterbra(spine_xyz, spine, start_point, end_point, dist, radiu_thres=radiu_thres)
+    if point_dist is None: point_dist = spine2point(spine_xyz, spine, cpoint)
+    if line_dist is None: line_dist = spine2line(spine_xyz, spine, cpoint, dirvector)
+    start_point, end_point = getEndpoint(spine_xyz, spine, cpoint, dirvector, R=R, line_thres= line_thres, point_dist=point_dist, line_dist=line_dist)
+    max_radius, line_len, radiu_p = lineInVerterbra(spine_xyz, spine, start_point, end_point, point_dist = point_dist, line_dist = line_dist, radiu_thres=radiu_thres)
     return max_radius, line_len,{'start_point':start_point,'end_point':end_point,'radiu_p':radiu_p}
 
 def pointInSphere(chk_point, sphere):
