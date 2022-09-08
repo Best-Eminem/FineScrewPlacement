@@ -4,3 +4,6 @@
 spineData/
 test/
 logs/
+imgs/
+snapshot/
+**/*.log
