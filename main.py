@@ -5,6 +5,7 @@ import random
 import argparse
 import logging
 import json
+from gym import Env
 from tqdm import tqdm
 from copy import deepcopy
 from collections import namedtuple, deque
@@ -29,10 +30,12 @@ parser.add_argument('--cfg', type=str, default = None,
                     help='configuration files of training')
 args = parser.parse_args()
 
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 ## Functions to build
-def build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx):
+def build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, input_y=80, input_x=160):
     logger.info("-------------------build spine data----------------------")
-    spine_data, spacing = get_spinedata(dataDir, pedicle_points,pedicle_points_in_zyx) #160，98，48 xyz
+    spine_data, spacing = get_spinedata(dataDir, pedicle_points,pedicle_points_in_zyx, input_z, input_y, input_x) #160，80，64 xyz
     # cfg.Env.step.line_rd = float(max(cfg.Env.step.line_rd, spacing)) # 根据spacing修改计算直线长度时的直线半径。
     logger.info("-------------------build data done-----------------------")
     return spine_data # namedtuple:
@@ -53,7 +56,7 @@ def build_exper_pool(capacity = 1e6):
         _ReplayMemory_: _deque(双端队列)_
     """
     logger.info("build experience pool")
-    Experience = namedtuple('Experience', ('state', 'action', 'reward', 'next_state', 'terminal'))
+    Experience = namedtuple('Experience', ('state', 'state_3D', 'action', 'reward', 'next_state', 'next_state_3D', 'terminal'))
     class ReplayMemory(object):
 
         def __init__(self, capacity):
@@ -69,12 +72,15 @@ def build_exper_pool(capacity = 1e6):
             experiences = self.sample(batch_size)
             experiences_batch = Experience(*zip(*experiences))
             state_batch = torch.stack(experiences_batch.state)
+            state_3D_batch = torch.stack(experiences_batch.state_3D)
             action_batch = torch.stack(experiences_batch.action)
             reward_batch = torch.stack(experiences_batch.reward)
             next_state_batch = torch.stack(experiences_batch.next_state)
+            next_state_3D_batch = torch.stack(experiences_batch.next_state_3D)
             terminal_batch = torch.stack(experiences_batch.terminal)
             state_action_batch = torch.cat((state_batch, action_batch), dim=1)
-            return state_batch, action_batch, reward_batch, next_state_batch, terminal_batch, state_action_batch
+            # state_3d_next_state_3D_batch = torch.cat((state_3D_batch, next_state_3D_batch), dim=1)
+            return state_batch, state_3D_batch, action_batch, reward_batch, next_state_batch, next_state_3D_batch, terminal_batch, state_action_batch #, state_3d_next_state_3D_batch
 
         def __len__(self):  ## len(experience)
             return len(self.memory)
@@ -84,8 +90,8 @@ def build_exper_pool(capacity = 1e6):
 
 def build_nets(pnet_pretrained):
     logger.info("build pnet and qnet")
-    policy_net = get_p_net('linear0',in_channels=4,out_channels=2)
-    q_net = get_q_net('linear0',in_channels=4+2,out_channels=1)
+    policy_net = get_p_net('conv0',in_channel=1,out_channel=2)
+    q_net = get_q_net('conv0',in_channel=1,out_channel=1)
     if pnet_pretrained:
         logger.info("policy_net load pretrained model from {}".format(pnet_pretrained))
         load_pretrain(q_net, pnet_pretrained)
@@ -114,70 +120,82 @@ def policy_action(state, env, policy_net): # state is tensor
         action = env.action_space.high[0] * policy_net(state) 
     return action
 
-def explore_one_step(env, state, experience_pool, policy_net):
+def explore_one_step(env, state, state_3D, experience_pool, policy_net):
+    if len(state_3D.shape)==3:
+        state_3D.unsqueeze_(0)
     def explore_action():
         with torch.no_grad():
-            action = env.action_space.high[0] * policy_net(state)
+            input = torch.unsqueeze(state_3D, 0)
+            input = input.to(device=device)
+            output = policy_net(input)[0].cpu().detach()
+            action = env.action_space.high[0] * output
             action = torch.normal(action, cfg.Train.EXPLORE_NOISE) #从给定参数means,std的离散正态分布中抽取随机数
             action = torch.clamp(action, min=env.action_space.low[0], max=env.action_space.high[0])
         return action
     action = explore_action()
-    _state, r, done, other = env.step(action.numpy()) #return state_, reward, done, {'len_delta': len_delta, 'radius_delta': radius_delta}
+    _state, r, done, other, _state_3D = env.step(action.numpy()) #return state_, reward, done, {'len_delta': len_delta, 'radius_delta': radius_delta}, state_3D
     reward = torch.tensor(r, dtype=torch.float)  # r
     # next_state = torch.tensor(np.concatenate(np.asarray(_state)), dtype=torch.float)  # s'
     next_state = torch.tensor(_state, dtype=torch.float)
+    next_state_3d = torch.tensor(_state_3D, dtype=torch.float)
+    if len(next_state_3d.shape) == 3:
+        next_state_3d.unsqueeze_(0)
+    # next_state_3d.unsqueeze_(0)
     terminal = torch.tensor(int(done) * 1.0, dtype=torch.float)  # t
     # Store the transition in experience pool
-    experience_pool.push(state, action, reward, next_state, terminal)  # (s,a,r,s',t), tensors
-    return done, next_state, r
+    experience_pool.push(state, state_3D, action, reward, next_state, next_state_3d, terminal)  # (s,s_3d,a,r,s',s'3d,t), tensors
+    return done, next_state, next_state_3d, r
 
-def update_q_net(q_net, target_p_net,target_q_net, optimizer_q, r, ns, d, sa):
-    curr_q_value = q_net(sa).squeeze()
-
-    next_action = target_p_net(ns)
-    next_sa = torch.cat((ns, next_action), dim=1)
-    target_next_q_value = target_q_net(next_sa).squeeze()
-
+def update_q_net(env, q_net, target_p_net,target_q_net, optimizer_q, r, s_3d, a, ns, ns_3d, d):
+    s_3d = s_3d.to(device=device)
+    a = a.to(device=device)
+    ns_3d = ns_3d.to(device=device)
+    r = r.to(device=device)
+    d = d.to(device=device)
+    curr_q_value = q_net(s_3d, a).squeeze()
+    next_action = target_p_net(ns_3d)
+    # nns_3d = env.simulate_step_batch(ns, next_action)
+    # next_s_3d_ns_3d = torch.cat((ns_3d, nns_3d), dim=1)
+    target_next_q_value = target_q_net(ns_3d, next_action).squeeze()
     target_q_value = r + cfg.Train.GAMMA * target_next_q_value * (1 - d)
-
     # mean square loss
     loss = torch.nn.MSELoss()(curr_q_value, target_q_value)
-
     # Optimize the model
     optimizer_q.zero_grad()
     loss.backward()
     optimizer_q.step()
-
     return loss.item()
 
-def update_policy_net(policy_net, q_net, optimizer_p, s):
-    curr_action = policy_net(s)
-    curr_sa = torch.cat((s, curr_action), dim=1)
-
+def update_policy_net(env, policy_net, q_net, optimizer_p, s_3d, s):
+    s_3d = s_3d.to(device=device)
+    curr_action = policy_net(s_3d)
+    # ns_3d = env.simulate_step_batch(s, curr_action)
+    # curr_s_3d_ns_3d = torch.cat((s_3d, ns_3d), dim=1)
     ## using q network
     disable_gradient(q_net)
-    loss = -1.0 * torch.mean(q_net(curr_sa))
+    loss = -1.0 * torch.mean(q_net(s_3d, curr_action))
     # Optimize the model
     optimizer_p.zero_grad()
     loss.backward()
     optimizer_p.step()
     enable_gradient(q_net)
-
     return loss.item()
 # 过估计趋势，
 # DDPG，D3算法。
 def evaluate(env, policy_net, epoch):
-    state = torch.tensor(env.reset(), dtype=torch.float)
+    state, state_3D = env.reset()
+    state = torch.tensor(state, dtype=torch.float32)
+    state_3D = torch.tensor(state_3D, dtype=torch.float32)
     reward = 0
     frame = 0
     fig = plt.figure()
     while frame < cfg.Evaluate.steps_threshold:
         frame = frame + 1
-        action = policy_action(state, env, policy_net).numpy()
-        next_state, r, done, others = env.step(action)
+        action = policy_action(state_3D, env, policy_net).numpy()
+        next_state, r, done, others, next_state_3D = env.step(action)
         reward = reward + r
-        state = torch.tensor(next_state, dtype=torch.float)
-        action = policy_action(state, env, policy_net).numpy()
+        state_3D = torch.tensor(next_state_3D, dtype=torch.float)
+        action = policy_action(state_3D, env, policy_net).numpy()
         info = {'reward': reward, 'r': r, 'len_delta': others['len_delta'], 'radiu_delta': others['radius_delta'],
                 'epoch': epoch, 'frame': frame, 'action': action}
 
@@ -188,32 +206,34 @@ def evaluate(env, policy_net, epoch):
                 images_to_video(cfg.Evaluate.img_save_path, '*.jpg', isDelete=True, savename = 'Epoch%d'%(epoch))
             break
 
-def train(env,policy_net, q_net, target_p_net, target_q_net, experience_pool, optimizer_q, optimizer_p, tb_writer):
+def train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, optimizer_q, optimizer_p, tb_writer):
     average_meter = AverageMeter()
     start_epoch = 0
     if not os.path.exists('./snapshot/'):
         os.makedirs('./snapshot/')
     end = time.time()
-
     iter_num = 0
-    for epoch in tqdm(range(start_epoch,cfg.Train.EPOCHS)):
+    for epoch in tqdm(range(start_epoch, cfg.Train.EPOCHS)):
         explore_steps = 0
         reward = 0
         # Initialize the environment and state
-        state = torch.tensor(env.reset(), dtype=torch.float32)
+        state, state_3D = env.reset()
+        state = torch.tensor(state, dtype=torch.float32)
+        state_3D = torch.tensor(state_3D, dtype=torch.float32)
         while explore_steps < cfg.Train.EPOCH_STEPS:
             explore_steps += 1
-            done, next_state, r = explore_one_step(env, state, experience_pool, policy_net)
+            done, next_state, next_state_3d, r = explore_one_step(env, state, state_3D, experience_pool, policy_net)
             # fig = plt.figure()
             # fig = env.render_(fig, None, **cfg.Evaluate)
             state = next_state
+            state_3d = next_state_3d
             reward += r #
             # perfrom one step of the optimization
             WARM_UP_SIZE = 50
             if len(experience_pool) > WARM_UP_SIZE:
-                s, _, r, ns, d, sa = experience_pool.sample_train(cfg.Train.BATCH_SIZE)
-                loss_q = update_q_net(q_net, target_p_net,target_q_net, optimizer_q, r, ns, d, sa)
-                loss_p = update_policy_net(policy_net, q_net, optimizer_p, s)
+                s, s_3d, a, r, ns, ns_3d, d, sa = experience_pool.sample_train(cfg.Train.BATCH_SIZE) #state_batch, state_3D_batch, action_batch, reward_batch, next_state_batch, next_state_3D_batch, terminal_batch, state_action_batch
+                loss_q = update_q_net(env, q_net, target_p_net, target_q_net, optimizer_q, r, s_3d, a, ns, ns_3d, d)
+                loss_p = update_policy_net(env, policy_net, q_net, optimizer_p, s_3d, s)
                 iter_num += 1
                 if epoch % cfg.Train.UPDATE_INTERVAL == 0:
                     copy_net(policy_net, target_p_net, cfg.Train.UPDATE_WEIGHT)
@@ -281,12 +301,17 @@ def main():
     dataDir = r'./spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz'
     pedicle_points = np.asarray([[25,56,69],[25,57,111]])
     pedicle_points_in_zyx = True #坐标是zyx形式吗？
-    spine_data = build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx) #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
+    spine_data = build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, input_y=80, input_x=160) #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
     '''---2 Build Environment  ---'''
     env = build_Env(spine_data)  # 只修改了初始化函数，其他函数待修改
     '''---3 Build Networks     ---'''
     pnet_pretrained = None
     policy_net, q_net, target_p_net, target_q_net = build_nets(pnet_pretrained)
+    # 将模型放入GPU
+    policy_net.to(device)
+    q_net.to(device)
+    target_p_net.to(device)
+    target_q_net.to(device)
     '''---4 Build Exploration pool ---'''
     experience_pool = build_exper_pool()
     '''---5 Build Optimizer    ---'''

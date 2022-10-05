@@ -1,9 +1,11 @@
+from copy import deepcopy
 import gym
 from gym import spaces, logger
 from gym.utils import seeding
 import numpy as np
 import matplotlib.pyplot as plt
 from utils import pedical_utils as utils3
+import torch
 
 import utils
 
@@ -45,7 +47,7 @@ class SpineEnv(gym.Env):
         self.cp_threshold = (self.centerPointL, np.min(dist)-1) # The position of the allowed points, represented as (center of sphere, radius)
         self.seed()
         
-        self.state = None
+        self.state_matrix = None
         self.steps_beyond_done = None # 表示到停止的时候一共尝试了多少step
 
     def seed(self, seed=None):
@@ -88,19 +90,20 @@ class SpineEnv(gym.Env):
         self.pre_max_radius, self.pre_line_len, self.endpoints = utils3.getLenRadiu \
             (self.mask_coards, self.mask_array, init_cpoint, dire_vector, R=1, line_thres=self.line_thres,
              radiu_thres=self.radiu_thres, point_dist=self.dist_mat_point, line_dist=self.dist_mat_line)
-        # self.state = np.concatenate([[self.pre_max_radius], init_degree, init_cpoint])
+        # self.state_matrix = np.concatenate([[self.pre_max_radius], init_degree, init_cpoint])
+        state_3D = self.draw_state(self.endpoints)
         state_list = [self.pre_max_radius, self.pre_line_len]
         state_list.extend(init_degree)
-        self.state = np.asarray(state_list, dtype=np.float32)
-        # self.state中存储的是degree，而送入网络时的是弧度
-        state_ = self.state * 1.0
+        self.state_matrix = np.asarray(state_list, dtype=np.float32)
+        # self.state_matrix中存储的是degree，而送入网络时的是弧度
+        state_ = self.state_matrix * 1.0
         # state_[1:3] = np.deg2rad(state_[1:3])
         state_[2:] = np.deg2rad(state_[2:])
-        return np.asarray(state_, dtype=np.float32)
+        return np.asarray(state_, dtype=np.float32), state_3D
 
-    def stepPhysics(self, delta_degree, delta_cpoint = None):
+    def stepPhysics(self, state_matrix, delta_degree, delta_cpoint = None):
         # todo 如果选择弧度值，这里需要改变
-        radius, length, degree = self.state[0], self.state[1], self.state[2:]
+        radius, length, degree = state_matrix[0], state_matrix[1], state_matrix[2:]
         result = {'d': degree + delta_degree,
                 #   'p': [degree, cpoint + delta_cpoint],
                 #   'dp': [degree + delta_degree, cpoint + delta_cpoint]
@@ -126,7 +129,7 @@ class SpineEnv(gym.Env):
         rotate_deg = self.rotate_mag * action[0:2]
         # move_cp = self.trans_mag * action[2:]
         # step forward
-        this_degree = self.stepPhysics(rotate_deg, delta_cpoint = None)
+        this_degree = self.stepPhysics(self.state_matrix, rotate_deg, delta_cpoint = None)
         this_dirpoint = utils3.coorLngLat2Space(this_degree, R=1., default = True)
         self.dist_mat_point = utils3.spine2point(self.mask_coards, self.mask_array, self.centerPointL)
         self.dist_mat_line = utils3.spine2line(self.mask_coards, self.mask_array, self.centerPointL, this_dirpoint)
@@ -137,25 +140,26 @@ class SpineEnv(gym.Env):
         
         state_list = [max_radius, line_len]
         state_list.extend(this_degree)
-        self.state = np.asarray(state_list, dtype=np.float32)
+        state_3D = self.draw_state(self.endpoints)
+        self.state_matrix = np.asarray(state_list, dtype=np.float32)
         if max_radius <= 0.: # todo 仍需要再思考
             line_len = 0.
 
         # Judge whether done
-        done = self.state[0] < self.done_radius \
-            or not (self.degree_threshold[0]<= self.state[2] <= self.degree_threshold[1]) \
-            or not (self.degree_threshold[2]<= self.state[3] <= self.degree_threshold[3]) \
-            # or not utils3.pointInSphere(self.state[3:], self.cp_threshold)
+        done = self.state_matrix[0] < self.done_radius \
+            or not (self.degree_threshold[0]<= self.state_matrix[2] <= self.degree_threshold[1]) \
+            or not (self.degree_threshold[2]<= self.state_matrix[3] <= self.degree_threshold[3]) \
+            # or not utils3.pointInSphere(self.state_matrix[3:], self.cp_threshold)
         done = bool(done)
 
         # -------------------------
         # Compute reward
         if not done:
-            len_delta, radius_delta = self.getReward(self.state) #当前的reward的计算，均为针对上一步的，可考虑改为针对历史最优值来计算
+            len_delta, radius_delta = self.getReward(self.state_matrix) #当前的reward的计算，均为针对上一步的，可考虑改为针对历史最优值来计算
             reward = self.weight[0] * len_delta + self.weight[1] * radius_delta
         elif self.steps_beyond_done is None:
             self.steps_beyond_done = 0
-            len_delta, radius_delta = self.getReward(self.state)
+            len_delta, radius_delta = self.getReward(self.state_matrix)
             reward = self.weight[0] * len_delta + self.weight[1] * radius_delta
         else:
             if self.steps_beyond_done == 0:
@@ -165,12 +169,12 @@ class SpineEnv(gym.Env):
                             Any further steps are undefined behavior.
                             """)
             self.steps_beyond_done += 1
-            len_delta, radius_delta = self.getReward(self.state, line_len)
+            len_delta, radius_delta = self.getReward(self.state_matrix, line_len)
             reward = -1000.  
-        state_ = self.state * 1.0
+        state_ = self.state_matrix * 1.0
         # state_[1:3] = np.deg2rad(state_[1:3])
         state_[2:] = np.deg2rad(state_[2:])
-        return np.asarray(state_, dtype=np.float32), reward, done, {'len_delta': len_delta, 'radius_delta': radius_delta}
+        return np.asarray(state_, dtype=np.float32), reward, done, {'len_delta': len_delta, 'radius_delta': radius_delta}, state_3D
 
     def render_(self, fig, info=None, is_vis=False, is_save_gif=False, img_save_path=None, **kwargs):
         # fig = plt.figure()
@@ -205,8 +209,8 @@ class SpineEnv(gym.Env):
             ax3.text(2, -30, '#Reward:' + '%.4f' % info['r'], color='red', fontsize=20)
             ax3.text(2, -2, '#TotalR:' + '%.4f' % info['reward'], color='red', fontsize=20)
             ax3.text(2, 110, '#frame:%.4d' % info['frame'], color='red', fontsize=20)
-            ax2.text(2, 110, '#radius:' + '%.4f' % self.state[0], color='red', fontsize=20)
-            ax2.text(2, 140, '#length:' + '%.4f' % self.state[1], color='red', fontsize=20)
+            ax2.text(2, 110, '#radius:' + '%.4f' % self.state_matrix[0], color='red', fontsize=20)
+            ax2.text(2, 140, '#length:' + '%.4f' % self.state_matrix[1], color='red', fontsize=20)
 
         if is_save_gif:
             if info is not None:
@@ -218,3 +222,37 @@ class SpineEnv(gym.Env):
             plt.pause(0.9)
             plt.ioff()
         return fig
+
+    def draw_state(self, endpoints):
+        state_3D = deepcopy(self.mask_array)
+        state_3D[endpoints['radiu_p']] = 2
+        return np.array(state_3D, dtype=np.float32)
+
+    def simulate_step_batch(self, state_nows, actions):
+        state_nows = state_nows.numpy()
+        actions = actions.detach().numpy()
+        next_3d_list = []
+        for state_now, action in zip(state_nows, actions):
+            assert self.action_space.contains(action), \
+                "%r (%s) invalid" % (action, type(action))
+            # ------------------------------------------
+            #Cast action to float to strip np trappings
+            rotate_deg = self.rotate_mag * action[0:2]
+            # move_cp = self.trans_mag * action[2:]
+            # step forward
+            this_degree = self.stepPhysics(state_now, rotate_deg, delta_cpoint = None)
+            this_dirpoint = utils3.coorLngLat2Space(this_degree, R=1., default = True)
+            dist_mat_point = utils3.spine2point(self.mask_coards, self.mask_array, self.centerPointL)
+            dist_mat_line = utils3.spine2line(self.mask_coards, self.mask_array, self.centerPointL, this_dirpoint)
+            max_radius, line_len, endpoints = utils3.getLenRadiu(self.mask_coards, self.mask_array, self.centerPointL,
+                                                                    this_dirpoint, R=1,
+                                                                    line_thres=self.line_thres,
+                                                                    radiu_thres=self.radiu_thres, point_dist=dist_mat_point, line_dist=dist_mat_line)
+            
+            state_list = [max_radius, line_len]
+            state_list.extend(this_degree)
+            state_3D = self.draw_state(endpoints)
+            next_3d_list.append(state_3D)
+        next_3d_list = torch.from_numpy(np.array(next_3d_list, dtype=np.float32))
+        next_3d_list.unsqueeze_(1)
+        return next_3d_list

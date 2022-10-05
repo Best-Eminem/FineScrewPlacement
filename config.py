@@ -67,7 +67,7 @@ __C.qnet.pretrained = None # whether to load a pretrained model. set value to 'N
 # options for Training both of nets
 # -----------------------------------
 __C.Train = CN()
-__C.Train.EPOCHS = 10000
+__C.Train.EPOCHS = 100
 __C.Train.EPOCH_STEPS = 50
 __C.Train.BATCH_SIZE = 50 # batch-train
 __C.Train.WARM_UP_SIZE = __C.Train.BATCH_SIZE
@@ -78,7 +78,7 @@ __C.Train.UPDATE_WEIGHT = 0.9 # used in p_targ.data.mul_(UPDATE_WEIGHT); p_targ.
 __C.Train.LEARN_RATE = 1e-3
 __C.Train.START_EPOCH = 0
 __C.Train.RESUME = None # whether to resume training, set value to 'None' or the path to the previous model.
-__C.Train.SAVE_INTERVAL = 100 # intervals to save and evaluate model
+__C.Train.SAVE_INTERVAL = 2 # intervals to save and evaluate model
 __C.Train.SNAPSHOT_DIR = './snapshot/' # path to save snapshot
 __C.Train.LOG_DIR = './logs/' #
 

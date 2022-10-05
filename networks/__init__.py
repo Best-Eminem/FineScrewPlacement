@@ -5,9 +5,11 @@ from __future__ import unicode_literals
 
 from networks.policyNet import linearPNet
 from networks.QNet import linearQNet
+from networks.policyCNN import CnnPNet
+from networks.QNetCNN import CnnQNet
 
-POLICYS = {'linear0': linearPNet}
-QS = {'linear0': linearQNet}
+POLICYS = {'linear0': linearPNet, 'conv0':CnnPNet}
+QS = {'linear0': linearQNet, 'conv0':CnnQNet}
 
 def get_p_net(name, **kwargs):
     return POLICYS[name](**kwargs)
