@@ -117,7 +117,8 @@ def build_opt_lr(pnet, qnet):
 
 def policy_action(state, env, policy_net): # state is tensor
     with torch.no_grad():
-        action = env.action_space.high[0] * policy_net(state) 
+        output = policy_net(state)[0].cpu()
+        action = env.action_space.high[0] * output
     return action
 
 def explore_one_step(env, state, state_3D, experience_pool, policy_net):
@@ -190,11 +191,19 @@ def evaluate(env, policy_net, epoch):
     frame = 0
     fig = plt.figure()
     while frame < cfg.Evaluate.steps_threshold:
+        if len(state_3D.shape)==3:
+            state_3D.unsqueeze_(0)
+            state_3D.unsqueeze_(0)
+        state_3D = state_3D.to(device=device)
         frame = frame + 1
         action = policy_action(state_3D, env, policy_net).numpy()
         next_state, r, done, others, next_state_3D = env.step(action)
         reward = reward + r
         state_3D = torch.tensor(next_state_3D, dtype=torch.float)
+        if len(state_3D.shape)==3:
+            state_3D.unsqueeze_(0)
+            state_3D.unsqueeze_(0)
+        state_3D = state_3D.to(device=device)
         action = policy_action(state_3D, env, policy_net).numpy()
         info = {'reward': reward, 'r': r, 'len_delta': others['len_delta'], 'radiu_delta': others['radius_delta'],
                 'epoch': epoch, 'frame': frame, 'action': action}

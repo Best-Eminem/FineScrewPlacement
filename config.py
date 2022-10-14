@@ -78,7 +78,7 @@ __C.Train.UPDATE_WEIGHT = 0.9 # used in p_targ.data.mul_(UPDATE_WEIGHT); p_targ.
 __C.Train.LEARN_RATE = 1e-3
 __C.Train.START_EPOCH = 0
 __C.Train.RESUME = None # whether to resume training, set value to 'None' or the path to the previous model.
-__C.Train.SAVE_INTERVAL = 2 # intervals to save and evaluate model
+__C.Train.SAVE_INTERVAL = 10 # intervals to save and evaluate model
 __C.Train.SNAPSHOT_DIR = './snapshot/' # path to save snapshot
 __C.Train.LOG_DIR = './logs/' #
 
