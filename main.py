@@ -88,24 +88,30 @@ def build_exper_pool(capacity = 1e6):
     logger.info("build pool done")
     return experience_pool
 
-def build_nets(pnet_pretrained):
-    logger.info("build pnet and qnet")
-    policy_net = get_p_net('conv0',in_channel=1,out_channel=2)
-    q_net = get_q_net('conv0',in_channel=1,out_channel=1)
-    if pnet_pretrained:
-        logger.info("policy_net load pretrained model from {}".format(pnet_pretrained))
-        load_pretrain(q_net, pnet_pretrained)
-        logger.info("load model done")
-    if pnet_pretrained:
-        logger.info("Q_net load pretrained model from {}".format(pnet_pretrained))
-        load_pretrain(q_net, qnet_pretrained = None)
-        logger.info("load model done")
-    target_p_net = deepcopy(policy_net)
-    target_q_net = deepcopy(q_net)
-    disable_gradient(target_p_net)
-    disable_gradient(target_q_net)
-    logger.info("build net done")
-    return policy_net, q_net, target_p_net, target_q_net
+def build_nets(pnet_pretrained, mode='train'):
+    if mode == 'train':
+        logger.info("build pnet and qnet")
+        policy_net = get_p_net('conv0',in_channel=1,out_channel=2)
+        q_net = get_q_net('conv0',in_channel=1,out_channel=1)
+        if pnet_pretrained:
+            logger.info("policy_net load pretrained model from {}".format(pnet_pretrained))
+            load_pretrain(policy_net, pnet_pretrained)
+            logger.info("load model done")
+        target_p_net = deepcopy(policy_net)
+        target_q_net = deepcopy(q_net)
+        disable_gradient(target_p_net)
+        disable_gradient(target_q_net)
+        logger.info("build net done")
+        return policy_net, q_net, target_p_net, target_q_net
+    else:
+        logger.info("build pnet")
+        policy_net = get_p_net('conv0',in_channel=1,out_channel=2)
+        if pnet_pretrained:
+            logger.info("policy_net load pretrained model from {}".format(pnet_pretrained))
+            load_pretrain(policy_net, pnet_pretrained)
+            logger.info("load model done")
+        logger.info("build net done")
+        return policy_net
 
 def build_opt_lr(pnet, qnet):
     logger.info('build optimizer')
@@ -285,6 +291,64 @@ def train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, o
                 print_speed(epoch, average_meter.epoch_time.avg, cfg.Train.EPOCHS)
         end = time.time()
 
+def evaluateOthers():
+    if args.cfg is not None:
+        cfg.merge_from_file(args.cfg)
+        cfg.Evaluate.img_save_path = cfg.Evaluate.img_save_path + cfg.Version
+        cfg.Train.LOG_DIR = cfg.Train.LOG_DIR + cfg.Version
+        cfg.Train.SNAPSHOT_DIR = cfg.Train.SNAPSHOT_DIR + cfg.Version
+        cfg.qnet.in_channels = cfg.Env.step.action_num + cfg.Env.step.state_num
+    if not os.path.exists('evaluate_results') and cfg.Evaluate.is_save_gif:
+        os.makedirs('evaluate_results')
+    #####-------注意，本例中，mask_array与坐标的排列方式均采用x,y,z形式来计算，zyx形式的要转换为xyz形式-----------------##### 
+    '''---1 Data Preprocess    ---'''
+    dataDir = r'./spineData/sub-verse821_L2_seg-vert_msk.nii.gz'
+    pedicle_points = np.asarray([[27,66,63],[27,67,111]])
+    pedicle_points_in_zyx = True #坐标是zyx形式吗？
+    spine_data = build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, input_y=80, input_x=160) #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
+    '''---2 Build Environment  ---'''
+    env = build_Env(spine_data)  # 只修改了初始化函数，其他函数待修改
+    '''---3 Build Networks     ---'''
+    pnet_pretrained = None
+    policy_net = build_nets(pnet_pretrained, mode='test')
+    '''---4 Resume networks and optimizers ---'''
+    Train_RESUME = 'snapshot/checkpoint_e90.pth' ## whether to resume training, set value to 'None' or the path to the previous model.
+    if Train_RESUME:
+        logger.info("Resume from {}".format(Train_RESUME))
+        policy_net = restore_from(pnet = policy_net, ckpt_path = Train_RESUME, mode = 'test')
+     # 将模型放入GPU
+    policy_net.to(device)
+    '''---5 Start Test'''
+    state, state_3D = env.reset()
+    state = torch.tensor(state, dtype=torch.float32)
+    state_3D = torch.tensor(state_3D, dtype=torch.float32)
+    reward = 0
+    frame = 0
+    fig = plt.figure()
+    while frame < cfg.Evaluate.steps_threshold:
+        if len(state_3D.shape)==3:
+            state_3D.unsqueeze_(0)
+            state_3D.unsqueeze_(0)
+        state_3D = state_3D.to(device=device)
+        frame = frame + 1
+        action = policy_action(state_3D, env, policy_net).numpy()
+        next_state, r, done, others, next_state_3D = env.step(action)
+        reward = reward + r
+        state_3D = torch.tensor(next_state_3D, dtype=torch.float)
+        if len(state_3D.shape)==3:
+            state_3D.unsqueeze_(0)
+            state_3D.unsqueeze_(0)
+        state_3D = state_3D.to(device=device)
+        action = policy_action(state_3D, env, policy_net).numpy()
+        info = {'reward': reward, 'r': r, 'len_delta': others['len_delta'], 'radiu_delta': others['radius_delta'],
+                'epoch': 0, 'frame': frame, 'action': action}
+
+        fig = env.render_(fig, info, **cfg.Evaluate)
+
+        if done or frame == cfg.Evaluate.steps_threshold:
+            if cfg.Evaluate.is_save_gif:
+                images_to_video(cfg.Evaluate.img_save_path, '*.jpg', isDelete=True, savename = 'TestResult')
+            break
 def main():
     if args.cfg is not None:
         cfg.merge_from_file(args.cfg)
@@ -307,8 +371,18 @@ def main():
     #####-------注意，本例中，mask_array与坐标的排列方式均采用x,y,z形式来计算，zyx形式的要转换为xyz形式-----------------##### 
     
     '''---1 Data Preprocess    ---'''
-    dataDir = r'./spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz'
-    pedicle_points = np.asarray([[25,56,69],[25,57,111]])
+    """
+    ***'./spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz':[[25,56,69],[25,57,111]]
+    './spineData/sub-verse835_dir-iso_L2_seg-vert_msk.nii.gz':[[25,56,69],[25,57,111]]
+    './spineData/sub-verse835_dir-iso_L3_seg-vert_msk.nii.gz':[[25,56,69],[25,57,111]]
+    ***'./spineData/sub-verse835_dir-iso_L4_seg-vert_msk.nii.gz':[[27,55,60],[27,52,111]]
+    './spineData/sub-verse821_L1_seg-vert_msk.nii.gz':[[25,56,69],[27,52,111]]
+    ***'./spineData/sub-verse821_L2_seg-vert_msk.nii.gz':[[27,66,63],[27,67,111]]
+    './spineData/sub-verse821_L3_seg-vert_msk.nii.gz':[[25,56,69],[25,57,111]]
+    './spineData/sub-verse821_L5_seg-vert_msk.nii.gz':[[25,56,69],[25,57,111]]
+    """
+    dataDir = r'./spineData/sub-verse821_L2_seg-vert_msk.nii.gz'
+    pedicle_points = np.asarray([[27,66,63],[27,67,111]])
     pedicle_points_in_zyx = True #坐标是zyx形式吗？
     spine_data = build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, input_y=80, input_x=160) #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
     '''---2 Build Environment  ---'''
@@ -335,7 +409,8 @@ def main():
     train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, optimizer_q, optimizer_p, tb_writer)
 
 if __name__ == "__main__":
-    main()
+    # main()
+    evaluateOthers()
 
 
 
