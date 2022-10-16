@@ -259,11 +259,12 @@ def train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, o
 
         # Save and evaluate model
         if epoch % cfg.Train.SAVE_INTERVAL == 0 and len(experience_pool) > cfg.Train.WARM_UP_SIZE:
-            torch.save({'epoch': epoch,
-                        'pnet_dict': policy_net.state_dict(),
-                        'qnet_dict': q_net.state_dict(),
-                        'optimizer_p': optimizer_p.state_dict(),
-                        'optimizer_q': optimizer_q.state_dict()}, cfg.Train.SNAPSHOT_DIR+'\\checkpoint_e%d.pth' % (epoch))
+            # torch.save({'epoch': epoch,
+            #             'pnet_dict': policy_net.state_dict(),
+            #             'qnet_dict': q_net.state_dict(),
+            #             'optimizer_p': optimizer_p.state_dict(),
+            #             'optimizer_q': optimizer_q.state_dict()}, cfg.Train.SNAPSHOT_DIR+'\\checkpoint_e%d.pth' % (epoch))
+            torch.save(policy_net.state_dict(), cfg.Train.SNAPSHOT_DIR+'/policy_model%d.pth' % (epoch))
             evaluate(env, policy_net, epoch) # TODO
 
         # Estimate time and show loss
