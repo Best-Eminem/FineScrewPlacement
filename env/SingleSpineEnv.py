@@ -10,7 +10,7 @@ import torch
 import utils
 
 class SpineEnv(gym.Env):
-    def __init__(self, spineData):
+    def __init__(self, spineData, degree_threshold):
         """
         Args:
             spineData:
@@ -29,7 +29,7 @@ class SpineEnv(gym.Env):
         self.action_num = 2 
         self.rotate_mag = [0.5, 0.5] # 直线旋转度数的量级 magtitude of rotation (δlatitude,δlongitude) of line
         self.reward_weight = [0.5, 0.5] # 计算每步reward的权重 weights for every kind of reward (), [line_delta, radius_delta] respectively
-        self.degree_threshold = [-10., 10., -15., 15.] # 用于衡量终止情况的直线经纬度阈值 [minimum latitude, maximum latitude, minimum longitude, maximum longitude]
+        self.degree_threshold = degree_threshold # 用于衡量终止情况的直线经纬度阈值 [minimum latitude, maximum latitude, minimum longitude, maximum longitude]
 
         self.min_action = -1.0 # threshold for sum of policy_net output and random exploration
         self.max_action = 1.0

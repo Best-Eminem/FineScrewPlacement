@@ -13,7 +13,7 @@ from config import cfg
 import torch
 import torch.optim as optim
 import numpy as np
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
 
 from dataLoad.loadNii import get_spinedata
@@ -40,9 +40,9 @@ def build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, 
     logger.info("-------------------build data done-----------------------")
     return spine_data # namedtuple:
 
-def build_Env(spine_data):
+def build_Env(spine_data, degree_threshold):
     logger.info("-------------------build env-----------------------------")
-    env = SingleSpineEnv.SpineEnv(spine_data)
+    env = SingleSpineEnv.SpineEnv(spine_data, degree_threshold)
     logger.info("-------------------build env done------------------------")
     return env
 
@@ -221,7 +221,7 @@ def evaluate(env, policy_net, epoch):
                 images_to_video(cfg.Evaluate.img_save_path, '*.jpg', isDelete=True, savename = 'Epoch%d'%(epoch))
             break
 
-def train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, optimizer_q, optimizer_p, tb_writer):
+def train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, optimizer_q, optimizer_p, tb_writer=None):
     average_meter = AverageMeter()
     start_epoch = 0
     if not os.path.exists('./snapshot/'):
@@ -244,7 +244,7 @@ def train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, o
             state_3d = next_state_3d
             reward += r #
             # perfrom one step of the optimization
-            WARM_UP_SIZE = 50
+            WARM_UP_SIZE = cfg.Train.WARM_UP_SIZE
             if len(experience_pool) > WARM_UP_SIZE:
                 s, s_3d, a, r, ns, ns_3d, d, sa = experience_pool.sample_train(cfg.Train.BATCH_SIZE) #state_batch, state_3D_batch, action_batch, reward_batch, next_state_batch, next_state_3D_batch, terminal_batch, state_action_batch
                 loss_q = update_q_net(env, q_net, target_p_net, target_q_net, optimizer_q, r, s_3d, a, ns, ns_3d, d)
@@ -277,8 +277,8 @@ def train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, o
             epoch_info['reward'] = reward
             average_meter.update(**epoch_info)
 
-            for k, v in epoch_info.items():
-                tb_writer.add_scalar(k, v, epoch)
+            # for k, v in epoch_info.items():
+            #     tb_writer.add_scalar(k, v, epoch)
             if epoch % cfg.Train.SAVE_INTERVAL == 0:
                 info = "Epoch: [{}/{}]\n".format(epoch + 1, cfg.Train.EPOCHS)
                 for cc, (k, v) in enumerate(epoch_info.items()):
@@ -367,7 +367,7 @@ def main():
                          os.path.join(cfg.Train.LOG_DIR, 'logs.txt'),
                          logging.INFO)
     # logger.info("config \n {}".format(json.dumps(cfg, indent=4)))
-    tb_writer = SummaryWriter(cfg.Train.LOG_DIR)
+    # tb_writer = SummaryWriter(cfg.Train.LOG_DIR)
     
     #####-------注意，本例中，mask_array与坐标的排列方式均采用x,y,z形式来计算，zyx形式的要转换为xyz形式-----------------##### 
     
@@ -382,12 +382,12 @@ def main():
     './spineData/sub-verse821_L3_seg-vert_msk.nii.gz':[[25,56,69],[25,57,111]]
     './spineData/sub-verse821_L5_seg-vert_msk.nii.gz':[[25,56,69],[25,57,111]]
     """
-    dataDir = r'./spineData/sub-verse821_L2_seg-vert_msk.nii.gz'
-    pedicle_points = np.asarray([[27,66,63],[27,67,111]])
+    dataDir = r'./spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz'
+    pedicle_points = np.asarray([[25,56,69],[25,57,111]])
     pedicle_points_in_zyx = True #坐标是zyx形式吗？
     spine_data = build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, input_y=80, input_x=160) #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
     '''---2 Build Environment  ---'''
-    env = build_Env(spine_data)  # 只修改了初始化函数，其他函数待修改
+    env = build_Env(spine_data, cfg.Env.step.deg_threshold)  # 只修改了初始化函数，其他函数待修改
     '''---3 Build Networks     ---'''
     pnet_pretrained = None
     policy_net, q_net, target_p_net, target_q_net = build_nets(pnet_pretrained)
@@ -407,11 +407,11 @@ def main():
         policy_net,q_net,optimizer_p,optimizer_q, Train_START_EPOCH =\
             restore_from(policy_net, q_net, optimizer_p, optimizer_q, Train_RESUME)
     '''---7 Start Training'''
-    train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, optimizer_q, optimizer_p, tb_writer)
+    train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, optimizer_q, optimizer_p, tb_writer=None)
 
 if __name__ == "__main__":
-    # main()
-    evaluateOthers()
+    main()
+    # evaluateOthers()
 
 
 
