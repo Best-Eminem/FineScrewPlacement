@@ -26,7 +26,7 @@ __C.Env.reset = CN()
 __C.Env.reset.initdegree = None # 初始经纬度 None means default value, i.e., [0,0]
 __C.Env.reset.initpoint = [0, -2.4, -2.4] # 初始定点坐标 None means default value, i.e., [0,0,0]
 __C.Env.reset.is_rand_d = False # 是否为初始定经纬度添加随机噪声
-__C.Env.reset.rdrange = [-2.0, 2.0] # range of random degree
+__C.Env.reset.rdrange = [-90, 90] # range of random degree
 __C.Env.reset.is_rand_p = True # 是否为初始定点坐标添加随机噪声
 __C.Env.reset.rprange = [-0.1, 0.1] # range of random cross point
 
@@ -69,7 +69,7 @@ __C.qnet.pretrained = None # whether to load a pretrained model. set value to 'N
 __C.Train = CN()
 __C.Train.EPOCHS = 50
 __C.Train.EPOCH_STEPS = 50
-__C.Train.BATCH_SIZE = 20 # batch-train
+__C.Train.BATCH_SIZE = 50 # batch-train
 __C.Train.WARM_UP_SIZE = __C.Train.BATCH_SIZE
 __C.Train.UPDATE_INTERVAL = 2 # target_p_net and target_q_net are updated every #UPDATE_INTERVAL iters
 __C.Train.GAMMA = 0.99 # used in target_q_value = r + cfg.Train.GAMMA * target_next_q_value * (1 - d)

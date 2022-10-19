@@ -42,7 +42,7 @@ def build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, 
 
 def build_Env(spine_data, degree_threshold):
     logger.info("-------------------build env-----------------------------")
-    env = SingleSpineEnv.SpineEnv(spine_data, degree_threshold)
+    env = SingleSpineEnv.SpineEnv(spine_data, degree_threshold, **cfg.Env)
     logger.info("-------------------build env done------------------------")
     return env
 
@@ -68,7 +68,7 @@ def build_exper_pool(capacity = 1e6):
         def sample(self, batch_size):
             return random.sample(self.memory, batch_size)
 
-        def sample_train(self,batch_size):
+        def sample_train(self, batch_size):
             experiences = self.sample(batch_size)
             experiences_batch = Experience(*zip(*experiences))
             state_batch = torch.stack(experiences_batch.state)
@@ -237,6 +237,7 @@ def train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, o
         state_3D = torch.tensor(state_3D, dtype=torch.float32)
         while explore_steps < cfg.Train.EPOCH_STEPS:
             explore_steps += 1
+            state, state_3D = env.reset() #每一步都随机初始化旋转角度，使经验池更具有随机性
             done, next_state, next_state_3d, r = explore_one_step(env, state, state_3D, experience_pool, policy_net)
             # fig = plt.figure()
             # fig = env.render_(fig, None, **cfg.Evaluate)

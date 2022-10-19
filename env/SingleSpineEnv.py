@@ -10,7 +10,7 @@ import torch
 import utils
 
 class SpineEnv(gym.Env):
-    def __init__(self, spineData, degree_threshold):
+    def __init__(self, spineData, degree_threshold, **opts):
         """
         Args:
             spineData:
@@ -18,7 +18,7 @@ class SpineEnv(gym.Env):
                 - mask_array: Segmentation results of spine, 1-in 0-out. shape:(slice, height, width)
                 - pedicle_points: center points in pedicle (x,y,z). shape:(2,3)
         """
-        # self.reset_opt = opts['reset']
+        self.reset_opt = opts['reset']
         # self.step_opt = opts['step']
 
         self.mask_array= spineData['mask_array']
@@ -65,7 +65,8 @@ class SpineEnv(gym.Env):
         #         low = self.reset_opt.rdrange[0], high = self.reset_opt.rdrange[1], size = [2,])
         # else:
         #     return np.array(deg)
-        return np.array([0.,0.])
+        # return np.array([0.,0.])
+        return np.array([0.,0.]) + self.np_random.uniform(low = self.reset_opt.rdrange[0], high = self.reset_opt.rdrange[1], size = [2,])
 
     def computeInitCPoint(self): # TODO: it still needs to refine after we can get more point
         # 初始化定点位置，添加噪声
@@ -94,7 +95,7 @@ class SpineEnv(gym.Env):
         state_3D = self.draw_state(self.endpoints)
         state_list = [self.pre_max_radius, self.pre_line_len]
         state_list.extend(init_degree)
-        self.state_matrix = np.asarray(state_list, dtype=np.float32)
+        self.state_matrix = np.asarray(state_list, dtype = np.float32)
         # self.state_matrix中存储的是degree，而送入网络时的是弧度
         state_ = self.state_matrix * 1.0
         # state_[1:3] = np.deg2rad(state_[1:3])
