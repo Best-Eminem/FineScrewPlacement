@@ -54,7 +54,7 @@ class SpineEnv(gym.Env):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
-    def computeInitDegree(self): # TODO: it still needs to refine after we can get more point
+    def computeInitDegree(self,eval=False): # TODO: it still needs to refine after we can get more point
         # 初始化倾斜角度，添加噪声
         # if self.reset_opt.initdegree:
         #     deg = self.reset_opt.initdegree
@@ -66,7 +66,9 @@ class SpineEnv(gym.Env):
         # else:
         #     return np.array(deg)
         # return np.array([0.,0.])
-        return np.array([0.,0.]) + self.np_random.uniform(low = self.reset_opt.rdrange[0], high = self.reset_opt.rdrange[1], size = [2,])
+        if eval==False:
+            return np.array([0.,0.]) + self.np_random.uniform(low = self.reset_opt.rdrange[0], high = self.reset_opt.rdrange[1], size = [2,])
+        else: return np.array([0.,0.])
 
     def computeInitCPoint(self): # TODO: it still needs to refine after we can get more point
         # 初始化定点位置，添加噪声
@@ -81,9 +83,9 @@ class SpineEnv(gym.Env):
         #     return np.array(cpoint)
         return self.centerPointL
 
-    def reset(self):
+    def reset(self, eval=False):
         self.steps_beyond_done = None # 设置当前步数为None
-        init_degree = self.computeInitDegree()
+        init_degree = self.computeInitDegree(eval=eval)
         init_cpoint = self.computeInitCPoint()
         dire_vector = utils3.coorLngLat2Space(init_degree) #螺钉方向向量
         self.dist_mat_point = utils3.spine2point(self.mask_coards, self.mask_array, init_cpoint)
@@ -193,6 +195,7 @@ class SpineEnv(gym.Env):
         ax2.scatter(self.endpoints['end_point'][1], self.endpoints['end_point'][2], c='g')
         ax2.set_xlabel('Y-axis')
         ax2.set_ylabel('Z-axis')
+        ax2.invert_yaxis()
         
         ax3 = fig.add_subplot(222)
         ax3.imshow(np.transpose(z_visual, (1, 0)))
@@ -201,17 +204,18 @@ class SpineEnv(gym.Env):
         ax3.scatter(self.endpoints['end_point'][0], self.endpoints['end_point'][1], c='g')
         ax3.set_xlabel('X-axis')
         ax3.set_ylabel('Y-axis')
+        ax3.invert_yaxis()
         if info is not None:
             # ax2.text(2, -9, '#len_d:' + '%.4f' % info['len_delta'], color='red', fontsize=10)
             # ax2.text(2, -2, '#radius_d:' + '%.4f' % info['radiu_delta'], color='red', fontsize=10)
             # ax2.text(2, -18, '#action_x:' + '%.4f' % info['action'][2], color='red', fontsize=10)
             # ax2.text(2, -10, '#action_y:' + '%.4f' % info['action'][3], color='red', fontsize=10)
             # ax2.text(2, -2, '#action_z:' + '%.4f' % info['action'][4], color='red', fontsize=10)
-            ax3.text(2, -30, '#Reward:' + '%.4f' % info['r'], color='red', fontsize=20)
-            ax3.text(2, -2, '#TotalR:' + '%.4f' % info['reward'], color='red', fontsize=20)
+            ax3.text(2, -60, '#Reward:' + '%.4f' % info['r'], color='red', fontsize=20)
+            ax3.text(2, -90, '#TotalR:' + '%.4f' % info['reward'], color='red', fontsize=20)
             ax3.text(2, 110, '#frame:%.4d' % info['frame'], color='red', fontsize=20)
-            ax2.text(2, 110, '#radius:' + '%.4f' % self.state_matrix[0], color='red', fontsize=20)
-            ax2.text(2, 140, '#length:' + '%.4f' % self.state_matrix[1], color='red', fontsize=20)
+            ax2.text(2, -60, '#radius:' + '%.4f' % self.state_matrix[0], color='red', fontsize=20)
+            ax2.text(2, -90, '#length:' + '%.4f' % self.state_matrix[1], color='red', fontsize=20)
 
         if is_save_gif:
             if info is not None:

@@ -25,9 +25,9 @@ __C.Env.name = "envLeft" # 设置椎弓根环境，对应不同环境设置函�
 __C.Env.reset = CN()
 __C.Env.reset.initdegree = None # 初始经纬度 None means default value, i.e., [0,0]
 __C.Env.reset.initpoint = [0, -2.4, -2.4] # 初始定点坐标 None means default value, i.e., [0,0,0]
-__C.Env.reset.is_rand_d = False # 是否为初始定经纬度添加随机噪声
+__C.Env.reset.is_rand_d = True # 是否为初始定经纬度添加随机噪声
 __C.Env.reset.rdrange = [-90, 90] # range of random degree
-__C.Env.reset.is_rand_p = True # 是否为初始定点坐标添加随机噪声
+__C.Env.reset.is_rand_p = False # 是否为初始定点坐标添加随机噪声
 __C.Env.reset.rprange = [-0.1, 0.1] # range of random cross point
 
 __C.Env.step = CN()

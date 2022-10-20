@@ -190,7 +190,7 @@ def update_policy_net(env, policy_net, q_net, optimizer_p, s_3d, s):
 # 过估计趋势，
 # DDPG，D3算法。
 def evaluate(env, policy_net, epoch):
-    state, state_3D = env.reset()
+    state, state_3D = env.reset(eval=True)
     state = torch.tensor(state, dtype=torch.float32)
     state_3D = torch.tensor(state_3D, dtype=torch.float32)
     reward = 0
@@ -232,12 +232,14 @@ def train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, o
         explore_steps = 0
         reward = 0
         # Initialize the environment and state
-        state, state_3D = env.reset()
-        state = torch.tensor(state, dtype=torch.float32)
-        state_3D = torch.tensor(state_3D, dtype=torch.float32)
+        # state, state_3D = env.reset()
+        # state = torch.tensor(state, dtype=torch.float32)
+        # state_3D = torch.tensor(state_3D, dtype=torch.float32)
         while explore_steps < cfg.Train.EPOCH_STEPS:
             explore_steps += 1
             state, state_3D = env.reset() #每一步都随机初始化旋转角度，使经验池更具有随机性
+            state = torch.tensor(state, dtype=torch.float32)
+            state_3D = torch.tensor(state_3D, dtype=torch.float32)
             done, next_state, next_state_3d, r = explore_one_step(env, state, state_3D, experience_pool, policy_net)
             # fig = plt.figure()
             # fig = env.render_(fig, None, **cfg.Evaluate)
@@ -309,7 +311,7 @@ def evaluateOthers():
     pedicle_points_in_zyx = True #坐标是zyx形式吗？
     spine_data = build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, input_y=80, input_x=160) #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
     '''---2 Build Environment  ---'''
-    env = build_Env(spine_data)  # 只修改了初始化函数，其他函数待修改
+    env = build_Env(spine_data, cfg.Env.step.deg_threshold)  # 只修改了初始化函数，其他函数待修改
     '''---3 Build Networks     ---'''
     pnet_pretrained = None
     policy_net = build_nets(pnet_pretrained, mode='test')
@@ -411,8 +413,8 @@ def main():
     train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, optimizer_q, optimizer_p, tb_writer=None)
 
 if __name__ == "__main__":
-    main()
-    # evaluateOthers()
+    # main()
+    evaluateOthers()
 
 
 
