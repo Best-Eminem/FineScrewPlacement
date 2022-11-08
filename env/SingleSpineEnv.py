@@ -28,7 +28,7 @@ class SpineEnv(gym.Env):
         self.centerPointR = self.pedicle_points[1]
         self.action_num = 2 
         self.rotate_mag = [0.5, 0.5] # 直线旋转度数的量级 magtitude of rotation (δlatitude,δlongitude) of line
-        self.reward_weight = [0.5, 0.5] # 计算每步reward的权重 weights for every kind of reward (), [line_delta, radius_delta] respectively
+        self.reward_weight = [0.1, 0.1] # 计算每步reward的权重 weights for every kind of reward (), [line_delta, radius_delta] respectively
         self.degree_threshold = degree_threshold # 用于衡量终止情况的直线经纬度阈值 [minimum latitude, maximum latitude, minimum longitude, maximum longitude]
 
         self.min_action = -1.0 # threshold for sum of policy_net output and random exploration
@@ -48,7 +48,7 @@ class SpineEnv(gym.Env):
         self.seed()
         
         self.state_matrix = None
-        self.steps_beyond_done = None # 表示到停止的时候一共尝试了多少step
+        self.steps_before_done = None # 表示到停止的时候一共尝试了多少step
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -84,7 +84,7 @@ class SpineEnv(gym.Env):
         return self.centerPointL
 
     def reset(self, eval=False):
-        self.steps_beyond_done = None # 设置当前步数为None
+        self.steps_before_done = None # 设置当前步数为None
         init_degree = self.computeInitDegree(eval=eval)
         init_cpoint = self.computeInitCPoint()
         dire_vector = utils3.coorLngLat2Space(init_degree) #螺钉方向向量
@@ -152,28 +152,40 @@ class SpineEnv(gym.Env):
         done = self.state_matrix[0] < self.done_radius \
             or not (self.degree_threshold[0]<= self.state_matrix[2] <= self.degree_threshold[1]) \
             or not (self.degree_threshold[2]<= self.state_matrix[3] <= self.degree_threshold[3]) \
-            # or not utils3.pointInSphere(self.state_matrix[3:], self.cp_threshold)
+            or not utils3.pointInSphere(self.state_matrix[3:], self.cp_threshold)
         done = bool(done)
 
         # -------------------------
-        # Compute reward
+        # Compute reward method1
         if not done:
             len_delta, radius_delta = self.getReward(self.state_matrix) #当前的reward的计算，均为针对上一步的，可考虑改为针对历史最优值来计算
-            reward = self.weight[0] * len_delta + self.weight[1] * radius_delta
-        elif self.steps_beyond_done is None:
-            self.steps_beyond_done = 0
+            if len_delta < 0 or radius_delta < 0:
+                reward = 10 * len_delta + 10 * radius_delta
+            else:
+                reward = self.weight[0] * len_delta + self.weight[1] * radius_delta
+        elif self.steps_before_done is None:
+            self.steps_before_done = 0
             len_delta, radius_delta = self.getReward(self.state_matrix)
-            reward = self.weight[0] * len_delta + self.weight[1] * radius_delta
+            if len_delta < 0 or radius_delta < 0:
+                reward = 10 * len_delta + 10 * radius_delta
+            else:
+                reward = self.weight[0] * len_delta + self.weight[1] * radius_delta
         else:
-            if self.steps_beyond_done == 0:
+            if self.steps_before_done == 0:
                 logger.warn("""
                             You are calling 'step()' even though this environment has already returned
                             done = True. You should always call 'reset()' once you receive 'done = True'
                             Any further steps are undefined behavior.
                             """)
-            self.steps_beyond_done += 1
+            self.steps_before_done += 1
             len_delta, radius_delta = self.getReward(self.state_matrix, line_len)
             reward = -1000.  
+
+        # --------------------------------------------------------------------------------------
+        # # Compute reward method2
+        # len_delta, radius_delta = self.getReward(self.state_matrix)
+        # reward = self.state_matrix[1] * 0.1
+
         state_ = self.state_matrix * 1.0
         # state_[1:3] = np.deg2rad(state_[1:3])
         state_[2:] = np.deg2rad(state_[2:])

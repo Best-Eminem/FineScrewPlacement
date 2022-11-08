@@ -46,7 +46,7 @@ def build_Env(spine_data, degree_threshold):
     logger.info("-------------------build env done------------------------")
     return env
 
-def build_exper_pool(capacity = 1e6):
+def build_exper_pool(capacity = 1e3):
     """build experience pool
 
     Args:
@@ -127,10 +127,10 @@ def policy_action(state, env, policy_net): # state is tensor
         action = env.action_space.high[0] * output
     return action
 
-def explore_one_step(env, state, state_3D, experience_pool, policy_net):
+def explore_one_step(env, state, state_3D, experience_pool, policy_net, use_random_action):
     if len(state_3D.shape)==3:
         state_3D.unsqueeze_(0)
-    def explore_action():
+    def explore_action_by_policy():
         with torch.no_grad():
             input = torch.unsqueeze(state_3D, 0)
             input = input.to(device=device)
@@ -139,7 +139,12 @@ def explore_one_step(env, state, state_3D, experience_pool, policy_net):
             action = torch.normal(action, cfg.Train.EXPLORE_NOISE) #从给定参数means,std的离散正态分布中抽取随机数
             action = torch.clamp(action, min=env.action_space.low[0], max=env.action_space.high[0])
         return action
-    action = explore_action()
+    if use_random_action: # 初始化经验池时应该用随机动作
+        action = torch.empty((2), dtype=torch.float32).uniform_(-1,1)
+        action = env.action_space.high[0] * action
+        action = torch.clamp(action, min=env.action_space.low[0], max=env.action_space.high[0])
+    else:
+        action = explore_action_by_policy()
     _state, r, done, other, _state_3D = env.step(action.numpy()) #return state_, reward, done, {'len_delta': len_delta, 'radius_delta': radius_delta}, state_3D
     reward = torch.tensor(r, dtype=torch.float)  # r
     # next_state = torch.tensor(np.concatenate(np.asarray(_state)), dtype=torch.float)  # s'
@@ -164,7 +169,7 @@ def update_q_net(env, q_net, target_p_net,target_q_net, optimizer_q, r, s_3d, a,
     # nns_3d = env.simulate_step_batch(ns, next_action)
     # next_s_3d_ns_3d = torch.cat((ns_3d, nns_3d), dim=1)
     target_next_q_value = target_q_net(ns_3d, next_action).squeeze()
-    target_q_value = r + cfg.Train.GAMMA * target_next_q_value * (1 - d)
+    target_q_value = r + cfg.Train.GAMMA * target_next_q_value * (1 - d) #若reward直接使用的是螺钉长度，需要给reward加上缩放系数0.1
     # mean square loss
     loss = torch.nn.MSELoss()(curr_q_value, target_q_value)
     # Optimize the model
@@ -190,6 +195,7 @@ def update_policy_net(env, policy_net, q_net, optimizer_p, s_3d, s):
 # 过估计趋势，
 # DDPG，D3算法。
 def evaluate(env, policy_net, epoch):
+    policy_net = policy_net.eval()
     state, state_3D = env.reset(eval=True)
     state = torch.tensor(state, dtype=torch.float32)
     state_3D = torch.tensor(state_3D, dtype=torch.float32)
@@ -204,7 +210,7 @@ def evaluate(env, policy_net, epoch):
         frame = frame + 1
         action = policy_action(state_3D, env, policy_net).numpy()
         next_state, r, done, others, next_state_3D = env.step(action)
-        reward = reward + r
+        reward = reward + r * 0.1
         state_3D = torch.tensor(next_state_3D, dtype=torch.float)
         if len(state_3D.shape)==3:
             state_3D.unsqueeze_(0)
@@ -223,43 +229,45 @@ def evaluate(env, policy_net, epoch):
 
 def train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, optimizer_q, optimizer_p, tb_writer=None):
     average_meter = AverageMeter()
-    start_epoch = 0
+    start_epoch = 1
     if not os.path.exists('./snapshot/'):
         os.makedirs('./snapshot/')
     end = time.time()
     iter_num = 0
-    for epoch in tqdm(range(start_epoch, cfg.Train.EPOCHS)):
+    for epoch in tqdm(range(start_epoch, cfg.Train.EPOCHS + 1)):
+        loss_p = 0
+        loss_q = 0
         explore_steps = 0
         reward = 0
+        WARM_UP_SIZE = cfg.Train.WARM_UP_SIZE
         # Initialize the environment and state
-        # state, state_3D = env.reset()
-        # state = torch.tensor(state, dtype=torch.float32)
-        # state_3D = torch.tensor(state_3D, dtype=torch.float32)
+        state, state_3D = env.reset()
+        state = torch.tensor(state, dtype=torch.float32)
+        state_3D = torch.tensor(state_3D, dtype=torch.float32)
         while explore_steps < cfg.Train.EPOCH_STEPS:
             explore_steps += 1
-            state, state_3D = env.reset() #每一步都随机初始化旋转角度，使经验池更具有随机性
-            state = torch.tensor(state, dtype=torch.float32)
-            state_3D = torch.tensor(state_3D, dtype=torch.float32)
-            done, next_state, next_state_3d, r = explore_one_step(env, state, state_3D, experience_pool, policy_net)
+            # state, state_3D = env.reset() #每一步都随机初始化旋转角度，使经验池更具有随机性
+            # state = torch.tensor(state, dtype=torch.float32)
+            # state_3D = torch.tensor(state_3D, dtype=torch.float32)
+            done, next_state, next_state_3d, r = explore_one_step(env, state, state_3D, experience_pool, policy_net, len(experience_pool) <= WARM_UP_SIZE)
             # fig = plt.figure()
             # fig = env.render_(fig, None, **cfg.Evaluate)
             state = next_state
             state_3d = next_state_3d
-            reward += r #
-            # perfrom one step of the optimization
-            WARM_UP_SIZE = cfg.Train.WARM_UP_SIZE
-            if len(experience_pool) > WARM_UP_SIZE:
+            reward += r 
+            if len(experience_pool) > WARM_UP_SIZE and explore_steps % 10 == 0:
                 s, s_3d, a, r, ns, ns_3d, d, sa = experience_pool.sample_train(cfg.Train.BATCH_SIZE) #state_batch, state_3D_batch, action_batch, reward_batch, next_state_batch, next_state_3D_batch, terminal_batch, state_action_batch
                 loss_q = update_q_net(env, q_net, target_p_net, target_q_net, optimizer_q, r, s_3d, a, ns, ns_3d, d)
                 loss_p = update_policy_net(env, policy_net, q_net, optimizer_p, s_3d, s)
                 iter_num += 1
-                if epoch % cfg.Train.UPDATE_INTERVAL == 0:
+                if explore_steps % cfg.Train.UPDATE_INTERVAL == 0:
                     copy_net(policy_net, target_p_net, cfg.Train.UPDATE_WEIGHT)
                     copy_net(q_net, target_q_net, cfg.Train.UPDATE_WEIGHT)
 
             if done:
                 break # one episode
-
+        
+        print('loss_p: ', loss_p, ', loss_q: ', loss_q, ', reward: ', reward)
         # Save and evaluate model
         if epoch % cfg.Train.SAVE_INTERVAL == 0 and len(experience_pool) > cfg.Train.WARM_UP_SIZE:
             # torch.save({'epoch': epoch,
@@ -283,7 +291,7 @@ def train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, o
             # for k, v in epoch_info.items():
             #     tb_writer.add_scalar(k, v, epoch)
             if epoch % cfg.Train.SAVE_INTERVAL == 0:
-                info = "Epoch: [{}/{}]\n".format(epoch + 1, cfg.Train.EPOCHS)
+                info = "Epoch: [{}/{}]\n".format(epoch, cfg.Train.EPOCHS)
                 for cc, (k, v) in enumerate(epoch_info.items()):
                     if cc % 2 == 0:
                         info += ("\t{:s}\t").format(
@@ -413,8 +421,8 @@ def main():
     train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, optimizer_q, optimizer_p, tb_writer=None)
 
 if __name__ == "__main__":
-    # main()
-    evaluateOthers()
+    main()
+    # evaluateOthers()
 
 
 
