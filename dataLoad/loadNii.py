@@ -54,7 +54,7 @@ def resize_image_itk(itkimage, newSize, resamplemethod=sitk.sitkNearestNeighbor)
     newSize = np.array(newSize, float)
     factor = originSize / newSize
     newSpacing = originSpacing * factor
-    newSize = newSize.astype(np.int)  # spacing肯定不能是整数
+    newSize = newSize.astype(np.int32)  # spacing肯定不能是整数
     resampler.SetReferenceImage(itkimage)   # 需要重新采样的目标图像
     resampler.SetSize(newSize.tolist())
     resampler.SetOutputSpacing(newSpacing.tolist())

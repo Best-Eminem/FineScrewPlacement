@@ -40,18 +40,25 @@ class CnnQNet(nn.Module):
         )
         self.linear_net_1 = nn.Sequential(
             nn.Linear(102400, 512),
-            nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU()
+            nn.BatchNorm1d(512),
+            nn.ReLU(inplace=True),
+            # nn.Linear(512, 256),
+            # nn.BatchNorm1d(256),
+            # nn.ReLU(inplace=True),
+            # nn.Linear(256, 128),
+            # nn.BatchNorm1d(128),
+            # nn.ReLU(inplace=True),
+            # nn.Linear(128, 64),
+            nn.Linear(512, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(inplace=True)
         )
         self.linear_net_2 = nn.Sequential(
             nn.Linear(66, 64),
-            nn.ReLU(),
+            nn.BatchNorm1d(64),
+            nn.ReLU(inplace=True),
             nn.Linear(64, out_channel),
+            nn.Sigmoid(),
         )
     def forward(self, state, action):
         state = self.conv_net(state)

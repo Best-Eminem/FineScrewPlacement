@@ -40,30 +40,40 @@ class CnnPNet(nn.Module):
         )
         self.linear_net_1 = nn.Sequential(
             nn.Linear(102400, 512),
-            nn.ReLU(),
+            nn.BatchNorm1d(512),
+            nn.ReLU(inplace=True),
             nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, out_channel),
-            nn.Tanh()
+            # nn.BatchNorm1d(256),
+            # nn.ReLU(inplace=True),
+            # nn.Linear(256, 128),
+            # nn.BatchNorm1d(128),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, out_channel),
+            # nn.Tanh(),
+            2 * nn.Sigmoid() - 1,
         )
         self.linear_net_2 = nn.Sequential(
             nn.Linear(102400, 512),
-            nn.ReLU(),
+            nn.BatchNorm1d(512),
+            nn.ReLU(inplace=True),
             nn.Linear(512, 256),
-            nn.ReLU(),
+            nn.BatchNorm1d(256),
+            nn.ReLU(inplace=True),
             nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, out_channel),
-            nn.Tanh()
+            nn.BatchNorm1d(128),
+            nn.ReLU(inplace=True),
+            # nn.Linear(128, out_channel),
+            # nn.Tanh()
         )
+        self.activateFunction = nn.Sequential(nn.Linear(128, out_channel),
+                                            2 * nn.Sigmoid() - 1,)
     def forward(self, x):
         action_list = []
         x = self.conv_net(x)
         # for i in range(self.agents):
         _x = x.view(-1,102400)
         agent_1 = self.linear_net_1(_x)
+        # agent_1 = self.activateFunction(agent_1)
         # agent_2 = self.linear_net_2(_x)
         action_list.append(agent_1)
         # action_list.append(agent_2)

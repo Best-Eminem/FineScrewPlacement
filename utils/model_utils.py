@@ -40,8 +40,11 @@ def disable_gradient(network):
     for p in network.parameters():
         p.requires_grad = False
 
-def copy_net(source_net, target_net, UPDATE_WEIGHT = 0.9):
-    with torch.no_grad():
-        for p, p_targ in zip(source_net.parameters(), target_net.parameters()):
-            p_targ.data.mul_(UPDATE_WEIGHT)
-            p_targ.data.add_((1 - UPDATE_WEIGHT) * p.data)
+def copy_net(source_net, target_net, UPDATE_WEIGHT = 0.005):
+    # with torch.no_grad():
+    # UPDATE_WEIGHT = 0.9
+    #     for p, p_targ in zip(source_net.parameters(), target_net.parameters()):
+    #         p_targ.data.mul_(UPDATE_WEIGHT)
+    #         p_targ.data.add_((1 - UPDATE_WEIGHT) * p.data)
+    for param, target_param in zip(source_net.parameters(), target_net.parameters()):
+        target_param.data.copy_(UPDATE_WEIGHT * param.data + (1 - UPDATE_WEIGHT) * target_param.data)

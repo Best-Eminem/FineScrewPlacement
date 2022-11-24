@@ -6,4 +6,5 @@ test/
 logs/
 imgs/
 snapshot/
+runs/
 **/*.log

@@ -19,15 +19,16 @@ class SpineEnv(gym.Env):
                 - pedicle_points: center points in pedicle (x,y,z). shape:(2,3)
         """
         self.reset_opt = opts['reset']
-        # self.step_opt = opts['step']
+        self.step_opt = opts['step']
 
+        self.state_shape = self.reset_opt['state_shape']
         self.mask_array= spineData['mask_array']
         self.mask_coards = spineData['mask_coards']
         self.pedicle_points = spineData['pedicle_points']
         self.centerPointL = self.pedicle_points[0]
         self.centerPointR = self.pedicle_points[1]
         self.action_num = 2 
-        self.rotate_mag = [0.5, 0.5] # 直线旋转度数的量级 magtitude of rotation (δlatitude,δlongitude) of line
+        self.rotate_mag = self.step_opt['rotate_mag'] # 直线旋转度数的量级 magtitude of rotation (δlatitude,δlongitude) of line
         self.reward_weight = [0.1, 0.1] # 计算每步reward的权重 weights for every kind of reward (), [line_delta, radius_delta] respectively
         self.degree_threshold = degree_threshold # 用于衡量终止情况的直线经纬度阈值 [minimum latitude, maximum latitude, minimum longitude, maximum longitude]
 
@@ -67,7 +68,7 @@ class SpineEnv(gym.Env):
         #     return np.array(deg)
         # return np.array([0.,0.])
         if eval==False:
-            return np.array([0.,0.]) + self.np_random.uniform(low = self.reset_opt.rdrange[0], high = self.reset_opt.rdrange[1], size = [2,])
+            return np.array([0.,0.]) + self.np_random.uniform(low = self.reset_opt['rdrange'][0], high = self.reset_opt['rdrange'][1], size = [2,])
         else: return np.array([0.,0.])
 
     def computeInitCPoint(self): # TODO: it still needs to refine after we can get more point
@@ -83,6 +84,11 @@ class SpineEnv(gym.Env):
         #     return np.array(cpoint)
         return self.centerPointL
 
+    def normalize(self, array):
+        mu = np.mean(array)
+        std = np.std(array)
+        return (array-mu) / std
+    
     def reset(self, eval=False):
         self.steps_before_done = None # 设置当前步数为None
         init_degree = self.computeInitDegree(eval=eval)
@@ -102,7 +108,7 @@ class SpineEnv(gym.Env):
         state_ = self.state_matrix * 1.0
         # state_[1:3] = np.deg2rad(state_[1:3])
         state_[2:] = np.deg2rad(state_[2:])
-        return np.asarray(state_, dtype=np.float32), state_3D
+        return np.asarray(state_, dtype=np.float32), self.normalize(state_3D)
 
     def stepPhysics(self, state_matrix, delta_degree, delta_cpoint = None):
         # todo 如果选择弧度值，这里需要改变
@@ -125,8 +131,9 @@ class SpineEnv(gym.Env):
         return len_delta, radius_delta
 
     def step(self, action):
-        assert self.action_space.contains(action), \
-            "%r (%s) invalid" % (action, type(action))
+        # action = self.rotate_mag[0] * action
+        # assert self.action_space.contains(action), \
+        #     "%r (%s) invalid" % (action, type(action))
         # ------------------------------------------
         #Cast action to float to strip np trappings
         rotate_deg = self.rotate_mag * action[0:2]
@@ -152,7 +159,7 @@ class SpineEnv(gym.Env):
         done = self.state_matrix[0] < self.done_radius \
             or not (self.degree_threshold[0]<= self.state_matrix[2] <= self.degree_threshold[1]) \
             or not (self.degree_threshold[2]<= self.state_matrix[3] <= self.degree_threshold[3]) \
-            or not utils3.pointInSphere(self.state_matrix[3:], self.cp_threshold)
+            # or not utils3.pointInSphere(self.state_matrix[3:], self.cp_threshold)
         done = bool(done)
 
         # -------------------------
@@ -160,16 +167,17 @@ class SpineEnv(gym.Env):
         if not done:
             len_delta, radius_delta = self.getReward(self.state_matrix) #当前的reward的计算，均为针对上一步的，可考虑改为针对历史最优值来计算
             if len_delta < 0 or radius_delta < 0:
-                reward = 10 * len_delta + 10 * radius_delta
+                reward = len_delta #+ 10 * radius_delta
             else:
-                reward = self.weight[0] * len_delta + self.weight[1] * radius_delta
+                reward = len_delta #+ self.weight[1] * radius_delta
+                # reward = self.weight[0] * len_delta #+ self.weight[1] * radius_delta
         elif self.steps_before_done is None:
             self.steps_before_done = 0
             len_delta, radius_delta = self.getReward(self.state_matrix)
             if len_delta < 0 or radius_delta < 0:
-                reward = 10 * len_delta + 10 * radius_delta
+                reward = len_delta #+ 10 * radius_delta
             else:
-                reward = self.weight[0] * len_delta + self.weight[1] * radius_delta
+                reward = len_delta #+ self.weight[1] * radius_delta
         else:
             if self.steps_before_done == 0:
                 logger.warn("""
@@ -178,18 +186,19 @@ class SpineEnv(gym.Env):
                             Any further steps are undefined behavior.
                             """)
             self.steps_before_done += 1
-            len_delta, radius_delta = self.getReward(self.state_matrix, line_len)
+            len_delta, radius_delta = self.getReward(self.state_matrix)
             reward = -1000.  
 
-        # --------------------------------------------------------------------------------------
+        # # --------------------------------------------------------------------------------------
         # # Compute reward method2
         # len_delta, radius_delta = self.getReward(self.state_matrix)
-        # reward = self.state_matrix[1] * 0.1
-
+        # # reward为当前螺钉长度减去一个base值
+        # reward = (self.state_matrix[1])/ 70 if not done else -1000
+        
         state_ = self.state_matrix * 1.0
         # state_[1:3] = np.deg2rad(state_[1:3])
         state_[2:] = np.deg2rad(state_[2:])
-        return np.asarray(state_, dtype=np.float32), reward, done, {'len_delta': len_delta, 'radius_delta': radius_delta}, state_3D
+        return np.asarray(state_, dtype=np.float32), reward, done, {'len_delta': len_delta, 'radius_delta': radius_delta}, self.normalize(state_3D)
 
     def render_(self, fig, info=None, is_vis=False, is_save_gif=False, img_save_path=None, **kwargs):
         # fig = plt.figure()
@@ -225,6 +234,7 @@ class SpineEnv(gym.Env):
             # ax2.text(2, -2, '#action_z:' + '%.4f' % info['action'][4], color='red', fontsize=10)
             ax3.text(2, -60, '#Reward:' + '%.4f' % info['r'], color='red', fontsize=20)
             ax3.text(2, -90, '#TotalR:' + '%.4f' % info['reward'], color='red', fontsize=20)
+            ax3.text(2, -120, '#action:' + '%s' % info['action'], color='red', fontsize=15)
             ax3.text(2, 110, '#frame:%.4d' % info['frame'], color='red', fontsize=20)
             ax2.text(2, -60, '#radius:' + '%.4f' % self.state_matrix[0], color='red', fontsize=20)
             ax2.text(2, -90, '#length:' + '%.4f' % self.state_matrix[1], color='red', fontsize=20)

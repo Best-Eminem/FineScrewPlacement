@@ -29,6 +29,7 @@ __C.Env.reset.is_rand_d = True # 是否为初始定经纬度添加随机噪声
 __C.Env.reset.rdrange = [-90, 90] # range of random degree
 __C.Env.reset.is_rand_p = False # 是否为初始定点坐标添加随机噪声
 __C.Env.reset.rprange = [-0.1, 0.1] # range of random cross point
+__C.Env.reset.state_shape = [64, 80 ,160]
 
 __C.Env.step = CN()
 __C.Env.step.radiu_thres = [-3, 3] # 用于计算半径时，裁剪z轴 crop z axis (A<->P) to get correct radius todo, maybe next time
@@ -38,7 +39,7 @@ __C.Env.step.max_action = 1.0
 __C.Env.step.action_num = 5 # the number of action
 __C.Env.step.state_num = 6 # the number of states
 __C.Env.step.trans_mag = [0.1, 0.1, 0.1] # 直线上一点的移动的量级 magtitude of movement of the point (x,y,z) on the line
-__C.Env.step.rotate_mag = [0.5, 0.5] # 直线经纬度旋转的量级 magtitude of rotation (δlatitude,δlongitude) of line
+__C.Env.step.rotate_mag = [5, 5] # 直线经纬度旋转的量级 magtitude of rotation (δlatitude,δlongitude) of line
 __C.Env.step.reward_weight = [0., 1.] # 计算每步reward的权重 weights for every kind of reward (), [line_delta, radius_delta] respectively
 __C.Env.step.deg_threshold = [-180., 180., -180., 180.] # 用于衡量终止情况的直线经纬度阈值 [minimum latitude, maximum latitude, minimum longitude, maximum longitude]
 
@@ -67,23 +68,23 @@ __C.qnet.pretrained = None # whether to load a pretrained model. set value to 'N
 # options for Training both of nets
 # -----------------------------------
 __C.Train = CN()
-__C.Train.EPOCHS = 200
+__C.Train.EPOCHS = 100
 __C.Train.EPOCH_STEPS = 50
-__C.Train.BATCH_SIZE = 50 # batch-train
-__C.Train.WARM_UP_SIZE = __C.Train.BATCH_SIZE
-__C.Train.UPDATE_INTERVAL = 10 # target_p_net and target_q_net are updated every #UPDATE_INTERVAL steps
+__C.Train.BATCH_SIZE = 100 # batch-train
+__C.Train.WARM_UP_SIZE = 1000 #__C.Train.BATCH_SIZE
+__C.Train.UPDATE_INTERVAL = 1 # target_p_net and target_q_net are updated every #UPDATE_INTERVAL steps
 __C.Train.GAMMA = 0.99 # used in target_q_value = r + cfg.Train.GAMMA * target_next_q_value * (1 - d)
-__C.Train.EXPLORE_NOISE = 0.05 # noise of exploring action
+__C.Train.EXPLORE_NOISE = 0.08 # noise of exploring action
 __C.Train.UPDATE_WEIGHT = 0.9 # used in p_targ.data.mul_(UPDATE_WEIGHT); p_targ.data.add_((1 - UPDATE_WEIGHT) * p.data)
 __C.Train.LEARN_RATE = 1e-3
 __C.Train.START_EPOCH = 0
 __C.Train.RESUME = None # whether to resume training, set value to 'None' or the path to the previous model.
-__C.Train.SAVE_INTERVAL = 10 # intervals to save and evaluate model
+__C.Train.SAVE_INTERVAL = 1 # intervals to save and evaluate model
 __C.Train.SNAPSHOT_DIR = './snapshot/' # path to save snapshot
 __C.Train.LOG_DIR = './logs/' #
 
 __C.Evaluate = CN()
-__C.Evaluate.steps_threshold = 300 # used to limit the forward steps when evaluation
+__C.Evaluate.steps_threshold = 100 # used to limit the forward steps when evaluation
 __C.Evaluate.is_vis = False
 __C.Evaluate.is_save_gif = True
 __C.Evaluate.img_save_path = './imgs/'
