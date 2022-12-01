@@ -80,16 +80,14 @@ __C.Train.LEARN_RATE = 1e-3
 __C.Train.START_EPOCH = 0
 __C.Train.RESUME = None # whether to resume training, set value to 'None' or the path to the previous model.
 __C.Train.SAVE_INTERVAL = 1 # intervals to save and evaluate model
+# __C.Train.SNAPSHOT_DIR = './random_reset_snapshot/' # path to save snapshot
 __C.Train.SNAPSHOT_DIR = './snapshot/' # path to save snapshot
 __C.Train.LOG_DIR = './logs/' #
 
 __C.Evaluate = CN()
-__C.Evaluate.steps_threshold = 100 # used to limit the forward steps when evaluation
+__C.Evaluate.steps_threshold = 50 # used to limit the forward steps when evaluation
 __C.Evaluate.is_vis = False
 __C.Evaluate.is_save_gif = True
+# __C.Evaluate.img_save_path = './random_reset_imgs/'
 __C.Evaluate.img_save_path = './imgs/'
-
-
-
-
-
+__C.Evaluate.random_reset = False

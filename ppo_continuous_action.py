@@ -76,7 +76,7 @@ def parse_args():
         help="the target KL divergence threshold")
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
-    args.minibatch_size = int(args.batch_size // args.num_minibatches)
+    args.minibatch_size = args.batch_size#int(args.batch_size // args.num_minibatches)
     # fmt: on
     return args
 
@@ -115,7 +115,8 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
 
-def evaluate(envs, agent, epoch):
+def evaluate(args, envs, agent, epoch):
+    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
     next_obs_2d, next_obs = envs.reset(random_reset = False)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
@@ -188,15 +189,15 @@ def evluateothers():
     if not os.path.exists('./ppo_snapshot'):
         os.makedirs('./ppo_snapshot')
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dataDir = r'./spineData/sub-verse835_dir-iso_L2_seg-vert_msk.nii.gz'
-    pedicle_points = np.asarray([[31,57,63],[30,58,106]])
+    dataDir = r'./spineData/sub-verse821_L1_seg-vert_msk.nii.gz'
+    pedicle_points = np.asarray([[30,69,68],[29,69,115]])
     pedicle_points_in_zyx = True #坐标是zyx形式吗？
     spine_data = build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, input_y=80, input_x=160) #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
     '''---2 Build Environment  ---'''
     envs = build_Env(spine_data, cfg['deg_threshold'], cfg)  # 只修改了初始化函数，其他函数待修改
     # assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
     agent = Agent()
-    Train_RESUME = 'ppo_snapshot_not_reset/ppo_160.pth' ## whether to resume training, set value to 'None' or the path to the previous model.
+    Train_RESUME = 'ppo_snapshot/ppo_200.pth' ## whether to resume training, set value to 'None' or the path to the previous model.
     if Train_RESUME:
         ckpt = torch.load(Train_RESUME)
         # epoch = ckpt['epoch']
@@ -234,6 +235,8 @@ def train():
            'step':{'rotate_mag':[5, 5]},}
     
     args = parse_args()
+    print(cfg)
+    print(args)
     if not os.path.exists('./ppo_imgs'):
         os.makedirs('./ppo_imgs')
     if not os.path.exists('./ppo_snapshot'):
@@ -296,10 +299,6 @@ def train():
     num_updates = args.total_timesteps // args.batch_size
 
     for update in tqdm(range(1, num_updates + 1)):
-        # next_obs_2d, next_obs = envs.reset(random_reset = False)
-        # next_obs = torch.Tensor(next_obs).to(device)
-        # next_done = torch.zeros(args.num_envs).to(device)
-        
         # Annealing the rate if instructed to do so.
         if args.anneal_lr:
             frac = 1.0 - (update - 1.0) / num_updates
@@ -327,6 +326,12 @@ def train():
             print(f"global_step={global_step}, episodic_return={reward}")
             writer.add_scalar("charts/episodic_return", reward, global_step)
             writer.add_scalar("charts/episodic_length", step+1, global_step)
+            
+            if done or step == args.num_steps-1:
+                _, next_obs = envs.reset(random_reset = False)
+                next_obs = torch.Tensor(next_obs).to(device)
+                next_done = torch.zeros(args.num_envs).to(device)
+            
 
 
         # bootstrap value if not done
@@ -426,10 +431,11 @@ def train():
         if update%10 == 0:
             torch.save(agent.state_dict(), './ppo_snapshot/'+'/ppo_%d.pth' % (update))
             agent = agent.eval()
-            evaluate(envs, agent, update)
+            evaluate(args, envs, agent, update)
             agent = agent.train()
     envs.close()
     writer.close()
 if __name__ == "__main__":
-    train()
-    # evluateothers()
+    # train()
+    evluateothers()
+    

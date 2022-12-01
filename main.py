@@ -35,10 +35,13 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 ## Functions to build
 def build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, input_y=80, input_x=160):
     logger.info("-------------------build spine data----------------------")
-    spine_data, spacing = get_spinedata(dataDir, pedicle_points,pedicle_points_in_zyx, input_z, input_y, input_x) #160，80，64 xyz
+    spine_datas = []
+    for dir, points in zip(dataDir, pedicle_points):
+        spine_data = get_spinedata(dir, points,pedicle_points_in_zyx, input_z, input_y, input_x) #160，80，64 xyz
+        spine_datas.append(spine_data)
     # cfg.Env.step.line_rd = float(max(cfg.Env.step.line_rd, spacing)) # 根据spacing修改计算直线长度时的直线半径。
     logger.info("-------------------build data done-----------------------")
-    return spine_data # namedtuple:
+    return spine_datas # namedtuple:
 
 def build_Env(spine_data, degree_threshold):
     logger.info("-------------------build env-----------------------------")
@@ -196,14 +199,15 @@ def update_policy_net(env, policy_net, q_net, optimizer_p, s_3d, s):
     return loss.item()
 # 过估计趋势，
 # DDPG，D3算法。
-def evaluate(env, policy_net, epoch):
-    state, state_3D = env.reset(eval=True)
+def evaluate(env, policy_net, epoch, random_reset):
+    state, state_3D = env.reset(random_reset) #True表示随机初始化位置
     state = torch.tensor(state, dtype=torch.float32)
     state_3D = torch.tensor(state_3D, dtype=torch.float32)
     reward = 0
     frame = 0
     fig = plt.figure()
-    while frame < cfg.Evaluate.steps_threshold:
+    done = False
+    while frame < cfg.Evaluate.steps_threshold and not done:
         if len(state_3D.shape)==3:
             state_3D.unsqueeze_(0)
             state_3D.unsqueeze_(0)
@@ -211,7 +215,8 @@ def evaluate(env, policy_net, epoch):
         frame = frame + 1
         action = policy_action(state_3D, env, policy_net).numpy()
         next_state, r, done, others, next_state_3D = env.step(action)
-        reward = reward + r
+        if not done:
+            reward = reward + r
         state_3D = torch.tensor(next_state_3D, dtype=torch.float32)
 
         info = {'reward': reward, 'r': r, 'len_delta': others['len_delta'], 'radiu_delta': others['radius_delta'],
@@ -219,13 +224,14 @@ def evaluate(env, policy_net, epoch):
 
         fig = env.render_(fig, info, **cfg.Evaluate)
 
-        if done or frame == cfg.Evaluate.steps_threshold:
+        if frame == cfg.Evaluate.steps_threshold or done:
             if cfg.Evaluate.is_save_gif:
                 images_to_video(cfg.Evaluate.img_save_path, '*.jpg', isDelete=True, savename = 'Epoch%d'%(epoch))
+            print('---------------------------Epoch{} Evaluate, total reward: {}------------------------------'.format(epoch, reward))
             break
     
 
-def train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, optimizer_q, optimizer_p, tb_writer=None):
+def train(envs, policy_net, q_net, target_p_net, target_q_net, experience_pool, optimizer_q, optimizer_p, tb_writer=None):
     average_meter = AverageMeter()
     start_epoch = 1
     if not os.path.exists('./snapshot/'):
@@ -239,24 +245,29 @@ def train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, o
         reward = 0
         WARM_UP_SIZE = cfg.Train.WARM_UP_SIZE
         # Initialize the environment and state
-        state, state_3D = env.reset()
-        visual_ = state_3D #+ np.where(self.dist_mat <= 1.2, 2, 0)
-        x_visual = np.max(visual_[:, :, :], 0)
-        z_visual = np.max(visual_[:, :, :], 2)
-        fig = plt.figure()
-        plt.clf()
-        ax2 = fig.add_subplot(221)
-        ax2.imshow(np.transpose(x_visual, (1, 0)))
-        ax3 = fig.add_subplot(222)
-        ax3.imshow(np.transpose(z_visual, (1, 0)))
+        env_index = (epoch-1)%len(envs)
+        env = envs[env_index]
+        state, state_3D = env.reset(random_reset=True)
         
-        fig.savefig('Epoch%d.jpg' % (epoch))
+        # visual_ = state_3D #+ np.where(self.dist_mat <= 1.2, 2, 0)
+        # x_visual = np.max(visual_[:, :, :], 0)
+        # z_visual = np.max(visual_[:, :, :], 2)
+        # fig = plt.figure()
+        # plt.clf()
+        # ax2 = fig.add_subplot(221)
+        # ax2.imshow(np.transpose(x_visual, (1, 0)))
+        # ax3 = fig.add_subplot(222)
+        # ax3.imshow(np.transpose(z_visual, (1, 0)))
+        
+        # fig.savefig('data%dEpoch%d.jpg' % (env_index, epoch))
         
         state = torch.tensor(state, dtype=torch.float32)
         state_3D = torch.tensor(state_3D, dtype=torch.float32)
-        while epoch == 1 and len(experience_pool) < WARM_UP_SIZE:
+        epoch_warm_size = 0
+        while epoch <= len(envs) and len(experience_pool) < WARM_UP_SIZE and epoch_warm_size < (WARM_UP_SIZE/len(envs)):
+            epoch_warm_size+=1
             done, next_state, next_state_3d, r = explore_one_step(env, state, state_3D, experience_pool, policy_net, len(experience_pool) < WARM_UP_SIZE)
-        while epoch != 1 and explore_steps < cfg.Train.EPOCH_STEPS:
+        while epoch > len(envs) and explore_steps < cfg.Train.EPOCH_STEPS:
             explore_steps += 1
             # state, state_3D = env.reset() #每一步都随机初始化旋转角度，使经验池更具有随机性
             # state = torch.tensor(state, dtype=torch.float32)
@@ -281,7 +292,7 @@ def train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, o
         
         # print('loss_p: ', loss_p, ', loss_q: ', loss_q, ', reward: ', reward)
         # Save and evaluate model
-        if epoch != 1 and epoch % cfg.Train.SAVE_INTERVAL == 0 and len(experience_pool) > cfg.Train.WARM_UP_SIZE:
+        if epoch > len(envs) and epoch % cfg.Train.SAVE_INTERVAL == 0 and len(experience_pool) > cfg.Train.WARM_UP_SIZE:
             # torch.save({'epoch': epoch,
             #             'pnet_dict': policy_net.state_dict(),
             #             'qnet_dict': q_net.state_dict(),
@@ -289,11 +300,11 @@ def train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, o
             #             'optimizer_q': optimizer_q.state_dict()}, cfg.Train.SNAPSHOT_DIR+'\\checkpoint_e%d.pth' % (epoch))
             torch.save(policy_net.state_dict(), cfg.Train.SNAPSHOT_DIR+'/policy_model%d.pth' % (epoch))
             policy_net = policy_net.eval()
-            evaluate(env, policy_net, epoch) # TODO
+            evaluate(env, policy_net, epoch, cfg.Evaluate.random_reset) # TODO
             policy_net = policy_net.train()
 
         # Estimate time and show loss
-        if len(experience_pool) > cfg.Train.WARM_UP_SIZE:
+        if epoch > len(envs) and len(experience_pool) > cfg.Train.WARM_UP_SIZE:
             epoch_time = time.time() - end
             epoch_info = {}
             epoch_info['epoch_time'] = epoch_time
@@ -328,24 +339,25 @@ def evaluateOthers():
         os.makedirs('evaluate_results')
     #####-------注意，本例中，mask_array与坐标的排列方式均采用x,y,z形式来计算，zyx形式的要转换为xyz形式-----------------##### 
     '''---1 Data Preprocess    ---'''
-    dataDir = r'./spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz'
-    pedicle_points = np.asarray([[25,56,69],[25,57,111]])
+    dataDir = [r'./spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz']
+    pedicle_points = np.asarray([[[25,56,69],[25,57,111]]])
     pedicle_points_in_zyx = True #坐标是zyx形式吗？
     spine_data = build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, input_y=80, input_x=160) #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
     '''---2 Build Environment  ---'''
-    env = build_Env(spine_data, cfg.Env.step.deg_threshold)  # 只修改了初始化函数，其他函数待修改
+    env = build_Env(spine_data[0], cfg.Env.step.deg_threshold)  # 只修改了初始化函数，其他函数待修改
     '''---3 Build Networks     ---'''
     pnet_pretrained = None
     policy_net = build_nets(pnet_pretrained, mode='test')
     '''---4 Resume networks and optimizers ---'''
-    Train_RESUME = 'snapshot/checkpoint_e90.pth' ## whether to resume training, set value to 'None' or the path to the previous model.
+    Train_RESUME = 'single_lumbar_snapshot/policy_model37.pth' ## whether to resume training, set value to 'None' or the path to the previous model.
     if Train_RESUME:
         logger.info("Resume from {}".format(Train_RESUME))
         policy_net = restore_from(pnet = policy_net, ckpt_path = Train_RESUME, mode = 'test')
      # 将模型放入GPU
     policy_net.to(device)
+    policy_net = policy_net.eval()
     '''---5 Start Test'''
-    state, state_3D = env.reset(eval=True)
+    state, state_3D = env.reset(random_reset=False)
     state = torch.tensor(state, dtype=torch.float32)
     state_3D = torch.tensor(state_3D, dtype=torch.float32)
     reward = 0
@@ -359,21 +371,18 @@ def evaluateOthers():
         frame = frame + 1
         action = policy_action(state_3D, env, policy_net).numpy()
         next_state, r, done, others, next_state_3D = env.step(action)
-        reward = reward + r
+        if not done:
+            reward = reward + r
         state_3D = torch.tensor(next_state_3D, dtype=torch.float32)
-        if len(state_3D.shape)==3:
-            state_3D.unsqueeze_(0)
-            state_3D.unsqueeze_(0)
-        state_3D = state_3D.to(device=device)
 
         info = {'reward': reward, 'r': r, 'len_delta': others['len_delta'], 'radiu_delta': others['radius_delta'],
-                'epoch': 0, 'frame': frame, 'action': '{}, {}'.format(round(action[0], 3), round(action[1]), 3)}
+                'epoch': 0, 'frame': frame, 'action':'{:.3f}, {:.3f}'.format(action[0], action[1])}
 
         fig = env.render_(fig, info, **cfg.Evaluate)
 
-        if done or frame == cfg.Evaluate.steps_threshold:
+        if frame == cfg.Evaluate.steps_threshold:
             if cfg.Evaluate.is_save_gif:
-                images_to_video(cfg.Evaluate.img_save_path, '*.jpg', isDelete=True, savename = 'TestResult')
+                images_to_video(cfg.Evaluate.img_save_path, '*.jpg', isDelete=True, savename = '835L2')
             break
 def main():
     if args.cfg is not None:
@@ -391,28 +400,45 @@ def main():
         add_file_handler('global',
                          os.path.join(cfg.Train.LOG_DIR, 'logs.txt'),
                          logging.INFO)
-    # logger.info("config \n {}".format(json.dumps(cfg, indent=4)))
+    logger.info("config \n {}".format(json.dumps(cfg, indent=4)))
     # tb_writer = SummaryWriter(cfg.Train.LOG_DIR)
     
     #####-------注意，本例中，mask_array与坐标的排列方式均采用x,y,z形式来计算，zyx形式的要转换为xyz形式-----------------##### 
     
     '''---1 Data Preprocess    ---'''
     """
-    ***'./spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz':[[25,56,69],[25,57,111]]
-    './spineData/sub-verse835_dir-iso_L2_seg-vert_msk.nii.gz':[[25,56,69],[25,57,111]]
-    './spineData/sub-verse835_dir-iso_L3_seg-vert_msk.nii.gz':[[25,56,69],[25,57,111]]
-    ***'./spineData/sub-verse835_dir-iso_L4_seg-vert_msk.nii.gz':[[27,55,60],[27,52,111]]
-    './spineData/sub-verse821_L1_seg-vert_msk.nii.gz':[[25,56,69],[27,52,111]]
-    ***'./spineData/sub-verse821_L2_seg-vert_msk.nii.gz':[[27,66,63],[27,67,111]]
-    './spineData/sub-verse821_L3_seg-vert_msk.nii.gz':[[25,56,69],[25,57,111]]
-    './spineData/sub-verse821_L5_seg-vert_msk.nii.gz':[[25,56,69],[25,57,111]]
+    './spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz':[[25,56,69],[25,57,111]]
+    './spineData/sub-verse835_dir-iso_L2_seg-vert_msk.nii.gz':[[31,57,63],[30,58,106]]
+    './spineData/sub-verse835_dir-iso_L3_seg-vert_msk.nii.gz':[[29,60,62],[25,59,109]]
+    './spineData/sub-verse835_dir-iso_L4_seg-vert_msk.nii.gz':[[26,55,60],[24,54,113]]
+    './spineData/sub-verse821_L1_seg-vert_msk.nii.gz':[[30,69,68],[29,69,115]]
+    './spineData/sub-verse821_L2_seg-vert_msk.nii.gz':[[27,66,63],[27,67,111]]
+    './spineData/sub-verse821_L3_seg-vert_msk.nii.gz':[[21,64,60],[23,69,109]]
+    './spineData/sub-verse821_L5_seg-vert_msk.nii.gz':[[45,66,54],[38,70,117]]
     """
-    dataDir = r'./spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz'
-    pedicle_points = np.asarray([[25,56,69],[25,57,111]])
+    dataDir = [r'./spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz',]
+            #   r'./spineData/sub-verse835_dir-iso_L2_seg-vert_msk.nii.gz',
+            #    r'./spineData/sub-verse835_dir-iso_L3_seg-vert_msk.nii.gz',
+            #    r'./spineData/sub-verse835_dir-iso_L4_seg-vert_msk.nii.gz',
+            #    r'./spineData/sub-verse821_L1_seg-vert_msk.nii.gz',
+            #    r'./spineData/sub-verse821_L2_seg-vert_msk.nii.gz',
+            #    r'./spineData/sub-verse821_L3_seg-vert_msk.nii.gz',
+            #    r'./spineData/sub-verse821_L5_seg-vert_msk.nii.gz']
+    pedicle_points = np.asarray([[[25,56,69],[25,57,111]],])
+                                #  [[31,57,63],[30,58,106]],
+                                #  [[29,60,62],[25,59,109]],
+                                #  [[26,55,60],[24,54,113]],
+                                #  [[30,69,68],[29,69,115]],
+                                #  [[27,66,63],[27,67,111]],
+                                #  [[21,64,60],[23,69,109]],
+                                #  [[45,66,54],[38,70,117]]])
     pedicle_points_in_zyx = True #坐标是zyx形式吗？
-    spine_data = build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, input_y=80, input_x=160) #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
+    spine_datas = build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, input_y=80, input_x=160) #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
     '''---2 Build Environment  ---'''
-    env = build_Env(spine_data, cfg.Env.step.deg_threshold)  # 只修改了初始化函数，其他函数待修改
+    envs = []
+    for spine_data in spine_datas:
+        env = build_Env(spine_data, cfg.Env.step.deg_threshold)  # 只修改了初始化函数，其他函数待修改
+        envs.append(env)
     '''---3 Build Networks     ---'''
     pnet_pretrained = None
     policy_net, q_net, target_p_net, target_q_net = build_nets(pnet_pretrained)
@@ -432,11 +458,11 @@ def main():
         policy_net,q_net,optimizer_p,optimizer_q, Train_START_EPOCH =\
             restore_from(policy_net, q_net, optimizer_p, optimizer_q, Train_RESUME)
     '''---7 Start Training'''
-    train(env, policy_net, q_net, target_p_net, target_q_net, experience_pool, optimizer_q, optimizer_p, tb_writer=None)
+    train(envs, policy_net, q_net, target_p_net, target_q_net, experience_pool, optimizer_q, optimizer_p, tb_writer=None)
 
 if __name__ == "__main__":
-    main()
-    # evaluateOthers()
+    # main()
+    evaluateOthers()
 
 
 

@@ -55,7 +55,7 @@ class SpineEnv(gym.Env):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
-    def computeInitDegree(self,eval=False): # TODO: it still needs to refine after we can get more point
+    def computeInitDegree(self,random_reset=True): # TODO: it still needs to refine after we can get more point
         # 初始化倾斜角度，添加噪声
         # if self.reset_opt.initdegree:
         #     deg = self.reset_opt.initdegree
@@ -67,7 +67,7 @@ class SpineEnv(gym.Env):
         # else:
         #     return np.array(deg)
         # return np.array([0.,0.])
-        if eval==False:
+        if random_reset:
             return np.array([0.,0.]) + self.np_random.uniform(low = self.reset_opt['rdrange'][0], high = self.reset_opt['rdrange'][1], size = [2,])
         else: return np.array([0.,0.])
 
@@ -89,9 +89,9 @@ class SpineEnv(gym.Env):
         std = np.std(array)
         return (array-mu) / std
     
-    def reset(self, eval=False):
+    def reset(self, random_reset=True):
         self.steps_before_done = None # 设置当前步数为None
-        init_degree = self.computeInitDegree(eval=eval)
+        init_degree = self.computeInitDegree(random_reset)
         init_cpoint = self.computeInitCPoint()
         dire_vector = utils3.coorLngLat2Space(init_degree) #螺钉方向向量
         self.dist_mat_point = utils3.spine2point(self.mask_coards, self.mask_array, init_cpoint)
@@ -162,38 +162,38 @@ class SpineEnv(gym.Env):
             # or not utils3.pointInSphere(self.state_matrix[3:], self.cp_threshold)
         done = bool(done)
 
-        # -------------------------
-        # Compute reward method1
-        if not done:
-            len_delta, radius_delta = self.getReward(self.state_matrix) #当前的reward的计算，均为针对上一步的，可考虑改为针对历史最优值来计算
-            if len_delta < 0 or radius_delta < 0:
-                reward = len_delta #+ 10 * radius_delta
-            else:
-                reward = len_delta #+ self.weight[1] * radius_delta
-                # reward = self.weight[0] * len_delta #+ self.weight[1] * radius_delta
-        elif self.steps_before_done is None:
-            self.steps_before_done = 0
-            len_delta, radius_delta = self.getReward(self.state_matrix)
-            if len_delta < 0 or radius_delta < 0:
-                reward = len_delta #+ 10 * radius_delta
-            else:
-                reward = len_delta #+ self.weight[1] * radius_delta
-        else:
-            if self.steps_before_done == 0:
-                logger.warn("""
-                            You are calling 'step()' even though this environment has already returned
-                            done = True. You should always call 'reset()' once you receive 'done = True'
-                            Any further steps are undefined behavior.
-                            """)
-            self.steps_before_done += 1
-            len_delta, radius_delta = self.getReward(self.state_matrix)
-            reward = -1000.  
+        # # -------------------------
+        # # Compute reward method1
+        # if not done:
+        #     len_delta, radius_delta = self.getReward(self.state_matrix) #当前的reward的计算，均为针对上一步的，可考虑改为针对历史最优值来计算
+        #     if len_delta < 0 or radius_delta < 0:
+        #         reward = len_delta #+ 10 * radius_delta
+        #     else:
+        #         reward = len_delta #+ self.weight[1] * radius_delta
+        #         # reward = self.weight[0] * len_delta #+ self.weight[1] * radius_delta
+        # elif self.steps_before_done is None:
+        #     self.steps_before_done = 0
+        #     len_delta, radius_delta = self.getReward(self.state_matrix)
+        #     if len_delta < 0 or radius_delta < 0:
+        #         reward = len_delta #+ 10 * radius_delta
+        #     else:
+        #         reward = len_delta #+ self.weight[1] * radius_delta
+        # else:
+        #     if self.steps_before_done == 0:
+        #         logger.warn("""
+        #                     You are calling 'step()' even though this environment has already returned
+        #                     done = True. You should always call 'reset()' once you receive 'done = True'
+        #                     Any further steps are undefined behavior.
+        #                     """)
+        #     self.steps_before_done += 1
+        #     len_delta, radius_delta = self.getReward(self.state_matrix)
+        #     reward = -1000.  
 
-        # # --------------------------------------------------------------------------------------
-        # # Compute reward method2
-        # len_delta, radius_delta = self.getReward(self.state_matrix)
-        # # reward为当前螺钉长度减去一个base值
-        # reward = (self.state_matrix[1])/ 70 if not done else -1000
+        # --------------------------------------------------------------------------------------
+        # Compute reward method2
+        len_delta, radius_delta = self.getReward(self.state_matrix)
+        # reward为当前螺钉长度减去一个base值
+        reward = (self.state_matrix[1])/ 70
         
         state_ = self.state_matrix * 1.0
         # state_[1:3] = np.deg2rad(state_[1:3])

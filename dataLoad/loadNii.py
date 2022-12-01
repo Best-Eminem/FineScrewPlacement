@@ -32,7 +32,8 @@ def get_spinedata(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, in
         mask_coards[2][:,:,i] = i
     return {"mask_coards":mask_coards, 
             "mask_array":mask_array, 
-            "pedicle_points":pedicle_points}, spacing
+            "pedicle_points":pedicle_points,
+            "spacing":spacing}
 
 def resize(img, pts,input_s,input_h,input_w):
         s,h,w = img.shape

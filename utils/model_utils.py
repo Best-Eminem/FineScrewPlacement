@@ -28,8 +28,8 @@ def restore_from(pnet, qnet=None, optimizer_p=None, optimizer_q=None, ckpt_path=
         return pnet, qnet, optimizer_p,optimizer_q, epoch
     else:
         ckpt = torch.load(ckpt_path)
-        epoch = ckpt['epoch']
-        pnet.load_state_dict(ckpt['pnet_dict'])
+        # epoch = ckpt['epoch']
+        pnet.load_state_dict(ckpt)
         return pnet
 
 def enable_gradient(network):

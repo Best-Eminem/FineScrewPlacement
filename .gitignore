@@ -4,7 +4,8 @@
 spineData/
 test/
 logs/
-imgs/
-snapshot/
 runs/
 **/*.log
+**/*.gif
+**/*.pth
+**/*.jpg
