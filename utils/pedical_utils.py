@@ -115,7 +115,7 @@ def getEndpoint(spine_xyz, spine, cpoint, dirvector, R=0.8, line_thres=None, poi
     return start_point, end_point
 
 
-def lineInVerterbra(spine_xyz,spine, start_point, end_point, point_dist, line_dist, radiu_thres=None):
+def lineInVerterbra(spine_xyz,spine, cpoint, start_point, end_point, point_dist, line_dist, radiu_thres=None):
     """_summary_
 
     Args:
@@ -135,18 +135,38 @@ def lineInVerterbra(spine_xyz,spine, start_point, end_point, point_dist, line_di
     line_len = distEuclid(spine_xyz[:,start_point[0],start_point[1],start_point[2]],
                           spine_xyz[:,end_point[0],end_point[1],end_point[2]])
 
-    dist_ = copy.deepcopy(point_dist)
+    # dist_ = copy.deepcopy(point_dist)
+    dist_ = copy.deepcopy(line_dist)  #计算在line上的点时，应该用spine相对于line的距离？
     dist_[np.where(spine==1)] = np.inf
+    if start_point[1] >= end_point[1]:
+        max_y, min_y = start_point[1], end_point[1]
+    else: 
+        max_y, min_y = end_point[1], start_point[1]
+    
+    # 计算spine相对于line的距离，只取line上的部分点到spine的距离来计算螺钉最大半径
+    dist_[:, 0:int((min_y+cpoint[1])/2), :] = np.inf
+    dist_[:, int((max_y+cpoint[1])/2):, :] = np.inf
+    
     if radiu_thres is not None:
         # Todo 如果后面需要排除尾部的
         dist_[0:radiu_thres[0], :, :] = np.inf
         dist_[radiu_thres[1] + 1:, :, :] = np.inf
-    #dist_ = dist_[start_point[0]:end_point[0]+1,:,:]
+    # dist_ = dist_[start_point[0]:end_point[0]+1,:,:]
     max_radius = np.min(dist_)
     # 以下用于可视化验证
     line_dist[np.where(spine<1)] = np.inf
-    ppp = np.where(line_dist <= max_radius)
-    return max_radius, line_len, (ppp[0],ppp[1],ppp[2])
+    ppp = np.where(line_dist < max_radius)
+    x_ppp, y_ppp, z_ppp = [], [], []
+    if start_point[0] >= end_point[0]:
+        max_x, min_x = start_point[0], end_point[0]
+    else: 
+        max_x, min_x = end_point[0], start_point[0]
+    for index in range(len(ppp[0])):
+        if max_x >= ppp[0][index] >= min_x:
+            x_ppp.append(ppp[0][index])
+            y_ppp.append(ppp[1][index])
+            z_ppp.append(ppp[2][index])
+    return max_radius, line_len, (np.array(x_ppp),np.array(y_ppp),np.array(z_ppp))
 
 def getLenRadiu(spine_xyz, spine, cpoint, dirvector, R=0.8, line_thres=None, radiu_thres = None, point_dist=None, line_dist=None):
     # 计算
@@ -154,8 +174,8 @@ def getLenRadiu(spine_xyz, spine, cpoint, dirvector, R=0.8, line_thres=None, rad
     if point_dist is None: point_dist = spine2point(spine_xyz, spine, cpoint)
     if line_dist is None: line_dist = spine2line(spine_xyz, spine, cpoint, dirvector)
     start_point, end_point = getEndpoint(spine_xyz, spine, cpoint, dirvector, R=R, line_thres= line_thres, point_dist=point_dist, line_dist=line_dist)
-    max_radius, line_len, radiu_p = lineInVerterbra(spine_xyz, spine, start_point, end_point, point_dist = point_dist, line_dist = line_dist, radiu_thres=radiu_thres)
-    return max_radius, line_len,{'start_point':start_point,'end_point':end_point,'radiu_p':radiu_p}
+    max_radius, line_len, radiu_p = lineInVerterbra(spine_xyz, spine, cpoint, start_point, end_point, point_dist = point_dist, line_dist = line_dist, radiu_thres=radiu_thres)
+    return max_radius, line_len,{'start_point':start_point,'end_point':end_point,'radiu_p':radiu_p, 'cpoint':cpoint}
 
 def pointInSphere(chk_point, sphere):
     # check whether the point in the sphere

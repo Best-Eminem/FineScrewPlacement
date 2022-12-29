@@ -136,6 +136,7 @@ class SpineEnv(gym.Env):
         #     "%r (%s) invalid" % (action, type(action))
         # ------------------------------------------
         #Cast action to float to strip np trappings
+        # action = np.clip(action, -1.0, 1.0)
         rotate_deg = self.rotate_mag * action[0:2]
         # move_cp = self.trans_mag * action[2:]
         # step forward
@@ -152,8 +153,9 @@ class SpineEnv(gym.Env):
         state_list.extend(this_degree)
         state_3D = self.draw_state(self.endpoints)
         self.state_matrix = np.asarray(state_list, dtype=np.float32)
-        if max_radius <= 0.: # todo 仍需要再思考
+        if max_radius < 1.0: # todo 仍需要再思考
             line_len = 0.
+            self.state_matrix[1] = 0.
 
         # Judge whether done
         done = self.state_matrix[0] < self.done_radius \
@@ -214,6 +216,7 @@ class SpineEnv(gym.Env):
         ax2.scatter(self.endpoints['radiu_p'][1], self.endpoints['radiu_p'][2], c='r')
         ax2.scatter(self.endpoints['start_point'][1], self.endpoints['start_point'][2], c='g')
         ax2.scatter(self.endpoints['end_point'][1], self.endpoints['end_point'][2], c='g')
+        ax2.scatter(self.endpoints['cpoint'][1], self.endpoints['cpoint'][2], c='g')
         ax2.set_xlabel('Y-axis')
         ax2.set_ylabel('Z-axis')
         ax2.invert_yaxis()
@@ -223,6 +226,7 @@ class SpineEnv(gym.Env):
         ax3.scatter(self.endpoints['radiu_p'][0], self.endpoints['radiu_p'][1], c='r')
         ax3.scatter(self.endpoints['start_point'][0], self.endpoints['start_point'][1], c='g')
         ax3.scatter(self.endpoints['end_point'][0], self.endpoints['end_point'][1], c='g')
+        ax3.scatter(self.endpoints['cpoint'][0], self.endpoints['cpoint'][1], c='g')
         ax3.set_xlabel('X-axis')
         ax3.set_ylabel('Y-axis')
         ax3.invert_yaxis()

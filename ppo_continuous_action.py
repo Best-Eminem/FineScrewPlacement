@@ -22,25 +22,26 @@ from utils.img_utils import images_to_video
 def parse_args():
     # fmt: off
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"),
+    parser.add_argument("--exp_name", type=str, default=os.path.basename(__file__).rstrip(".py"),
         help="the name of this experiment")
     parser.add_argument("--seed", type=int, default=1,
         help="seed of the experiment")
-    parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+    parser.add_argument("--torch_deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
         help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
         help="if toggled, cuda will be enabled by default")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
         help="if toggled, this experiment will be tracked with Weights and Biases")
-    parser.add_argument("--wandb-project-name", type=str, default="cleanRL",
+    parser.add_argument("--wandb_project_name", type=str, default="cleanRL",
         help="the wandb's project name")
-    parser.add_argument("--wandb-entity", type=str, default=None,
+    parser.add_argument("--wandb_entity", type=str, default=None,
         help="the entity (team) of wandb's project")
-    parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--capture_video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
         help="whether to capture videos of the agent performances (check out `videos` folder)")
+    
 
     # Algorithm specific arguments
-    parser.add_argument("--env_id", type=str, default="HalfCheetahBulletEnv-v0",
+    parser.add_argument("--env_id", type=str, default="FineScrewPlacement",
         help="the id of the environment")
     parser.add_argument("--total_timesteps", type=int, default=20000,
         help="total timesteps of the experiments")
@@ -74,6 +75,10 @@ def parse_args():
         help="the maximum norm for the gradient clipping")
     parser.add_argument("--target_kl", type=float, default=None,
         help="the target KL divergence threshold")
+    parser.add_argument("--snapshot_dir", type=str, default="ppo_snapshot",
+        help="the name of this snapshot dir")
+    parser.add_argument("--imgs_dir", type=str, default="ppo_imgs",
+        help="the name of this imgs dir")
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
     args.minibatch_size = args.batch_size#int(args.batch_size // args.num_minibatches)
@@ -136,9 +141,9 @@ def evaluate(args, envs, agent, epoch):
         info = {'reward': rewards, 'r': reward, 'len_delta': others['len_delta'], 'radiu_delta': others['radius_delta'],
                 'epoch': 0, 'frame': step, 'action':'{:.3f}, {:.3f}'.format(action[0], action[1])}
 
-        fig = envs.render_(fig, info, is_vis=False, is_save_gif=True, img_save_path='./ppo_imgs')
+        fig = envs.render_(fig, info, is_vis=False, is_save_gif=True, img_save_path=args.imgs_dir)
 
-    images_to_video('./ppo_imgs', '*.jpg', isDelete=True, savename = 'Update%d'%(epoch))
+    images_to_video(args.imgs_dir, '*.jpg', isDelete=True, savename = 'Update%d'%(epoch))
 
 class Agent(nn.Module):
     def __init__(self):
@@ -159,6 +164,7 @@ class Agent(nn.Module):
         )
         self.actor_mean = nn.Sequential(
             layer_init(nn.Linear(512, 2), std=0.01),
+            # nn.Tanh()
         )
         self.actor_logstd = nn.Parameter(-0.5 * torch.ones(1, 2))
 
@@ -184,48 +190,65 @@ def evluateothers():
            'step':{'rotate_mag':[5, 5]},}
     
     args = parse_args()
-    if not os.path.exists('./ppo_imgs'):
-        os.makedirs('./ppo_imgs')
-    if not os.path.exists('./ppo_snapshot'):
-        os.makedirs('./ppo_snapshot')
+    if not os.path.exists(args.imgs_dir):
+        os.makedirs(args.imgs_dir)
+    if not os.path.exists(args.snapshot_dir):
+        os.makedirs(args.snapshot_dir)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dataDir = r'./spineData/sub-verse821_L1_seg-vert_msk.nii.gz'
-    pedicle_points = np.asarray([[30,69,68],[29,69,115]])
-    pedicle_points_in_zyx = True #坐标是zyx形式吗？
-    spine_data = build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, input_y=80, input_x=160) #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
-    '''---2 Build Environment  ---'''
-    envs = build_Env(spine_data, cfg['deg_threshold'], cfg)  # 只修改了初始化函数，其他函数待修改
-    # assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
-    agent = Agent()
-    Train_RESUME = 'ppo_snapshot/ppo_200.pth' ## whether to resume training, set value to 'None' or the path to the previous model.
-    if Train_RESUME:
-        ckpt = torch.load(Train_RESUME)
-        # epoch = ckpt['epoch']
-        agent.load_state_dict(ckpt)
-    agent.to(device)
+    dataDirs = [r'spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz',
+                r'spineData/sub-verse835_dir-iso_L2_seg-vert_msk.nii.gz',
+                r'spineData/sub-verse835_dir-iso_L3_seg-vert_msk.nii.gz',
+                r'spineData/sub-verse835_dir-iso_L4_seg-vert_msk.nii.gz',
+                r'spineData/sub-verse821_L1_seg-vert_msk.nii.gz',
+                r'spineData/sub-verse821_L2_seg-vert_msk.nii.gz',
+                r'spineData/sub-verse821_L3_seg-vert_msk.nii.gz',
+                r'spineData/sub-verse821_L5_seg-vert_msk.nii.gz']
+    pedicle_points = np.asarray([[[25,56,69],[25,57,111]],
+                                 [[31,57,63],[30,58,106]],
+                                 [[29,60,62],[25,59,109]],
+                                 [[26,55,60],[24,54,113]],
+                                 [[30,69,68],[29,69,115]],
+                                 [[27,66,63],[27,67,111]],
+                                 [[21,64,60],[23,69,109]],
+                                 [[45,66,54],[38,70,117]]])
     
-    next_obs_2d, next_obs = envs.reset(random_reset = False)
-    next_obs = torch.Tensor(next_obs).to(device)
-    next_done = torch.zeros(args.num_envs).to(device)
-    step = 0
-    fig = plt.figure()
-    rewards = 0
-    while step<200:
-        step +=1
-        # ALGO LOGIC: action logic
-        with torch.no_grad():
-            action, logprob, _, value = agent.get_action_and_value(next_obs.unsqueeze_(0).unsqueeze_(0) if len(next_obs.shape) == 3 else next_obs)
-        # TRY NOT TO MODIFY: execute the game and log data.
-        _, reward, done, others, next_obs = envs.step(action.squeeze_(0).cpu().numpy() if len(action.shape) == 2 else action)
-        next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor([1.] if done else [0.]).to(device)
-        rewards = rewards + reward
+    for dataDir, pedicle_point in zip(dataDirs, pedicle_points):
+        # pedicle_point = np.asarray([[30,69,68],[29,69,115]])
+        pedicle_point_in_zyx = True #坐标是zyx形式吗？
+        spine_data = build_data_load(dataDir, pedicle_point, pedicle_point_in_zyx, input_z=64, input_y=80, input_x=160) #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
+        '''---2 Build Environment  ---'''
+        envs = build_Env(spine_data, cfg['deg_threshold'], cfg)  # 只修改了初始化函数，其他函数待修改
+        # assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
+        agent = Agent()
+        Train_RESUME = os.path.join(args.snapshot_dir, 'ppo_200.pth') ## whether to resume training, set value to 'None' or the path to the previous model.
+        if Train_RESUME:
+            ckpt = torch.load(Train_RESUME)
+            # epoch = ckpt['epoch']
+            agent.load_state_dict(ckpt)
+        agent.to(device)
+        
+        next_obs_2d, next_obs = envs.reset(random_reset = False)
+        next_obs = torch.Tensor(next_obs).to(device)
+        next_done = torch.zeros(args.num_envs).to(device)
+        step = 0
+        fig = plt.figure()
+        rewards = 0
+        while step<100:
+            step +=1
+            # ALGO LOGIC: action logic
+            with torch.no_grad():
+                action, logprob, _, value = agent.get_action_and_value(next_obs.unsqueeze_(0).unsqueeze_(0) if len(next_obs.shape) == 3 else next_obs)
+            # TRY NOT TO MODIFY: execute the game and log data.
+            _, reward, done, others, next_obs = envs.step(action.squeeze_(0).cpu().numpy() if len(action.shape) == 2 else action)
+            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor([1.] if done else [0.]).to(device)
+            rewards = rewards + reward
 
-        info = {'reward': rewards, 'r': reward, 'len_delta': others['len_delta'], 'radiu_delta': others['radius_delta'],
-                'epoch': 0, 'frame': step, 'action':'{:.3f}, {:.3f}'.format(action[0], action[1])}
+            info = {'reward': rewards, 'r': reward, 'len_delta': others['len_delta'], 'radiu_delta': others['radius_delta'],
+                    'epoch': 0, 'frame': step, 'action':'{:.3f}, {:.3f}'.format(action[0], action[1])}
 
-        fig = envs.render_(fig, info, is_vis=False, is_save_gif=True, img_save_path='./ppo_imgs')
+            fig = envs.render_(fig, info, is_vis=False, is_save_gif=True, img_save_path=args.imgs_dir)
 
-    images_to_video('./ppo_imgs', '*.jpg', isDelete=True, savename = 'Update%d'%(0))
+        images_to_video(args.imgs_dir, '*.jpg', isDelete=True, savename = os.path.basename(dataDir))
 
 def train():
     # env parameters
@@ -237,11 +260,11 @@ def train():
     args = parse_args()
     print(cfg)
     print(args)
-    if not os.path.exists('./ppo_imgs'):
-        os.makedirs('./ppo_imgs')
-    if not os.path.exists('./ppo_snapshot'):
-        os.makedirs('./ppo_snapshot')
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    if not os.path.exists(args.snapshot_dir):
+        os.makedirs(args.snapshot_dir)
+    if not os.path.exists(args.imgs_dir):
+        os.makedirs(args.imgs_dir)
+    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{time.strftime('%Y-%m-%d %H:%M',time.localtime(time.time()))}"
     if args.track:
         import wandb
 
@@ -321,7 +344,8 @@ def train():
             # TRY NOT TO MODIFY: execute the game and log data.
             _, reward, done, info, next_obs = envs.step(action.squeeze_(0).cpu().numpy() if len(action.shape) == 2 else action)
             rewards[step] = torch.tensor(reward).to(device).view(-1)
-            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor([1.] if done else [0.]).to(device)
+            # next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor([1.] if done else [0.]).to(device)
+            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor([0.] if done else [0.]).to(device) #均不设置为done
 
             print(f"global_step={global_step}, episodic_return={reward}")
             writer.add_scalar("charts/episodic_return", reward, global_step)
@@ -332,8 +356,6 @@ def train():
                 next_obs = torch.Tensor(next_obs).to(device)
                 next_done = torch.zeros(args.num_envs).to(device)
             
-
-
         # bootstrap value if not done
         with torch.no_grad():
             next_value = agent.get_value(next_obs.unsqueeze_(0).unsqueeze_(0)).reshape(1, -1)
@@ -410,7 +432,8 @@ def train():
                 optimizer.step()
 
             if args.target_kl is not None:
-                if approx_kl > args.target_kl:
+                if approx_kl > 1.5 * args.target_kl:
+                    print('Early stopping at step %d due to reaching max kl.'%epoch)
                     break
 
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
@@ -429,12 +452,13 @@ def train():
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
         if update%10 == 0:
-            torch.save(agent.state_dict(), './ppo_snapshot/'+'/ppo_%d.pth' % (update))
+            torch.save(agent.state_dict(), args.snapshot_dir+'/ppo_%d.pth' % (update))
             agent = agent.eval()
             evaluate(args, envs, agent, update)
             agent = agent.train()
     envs.close()
     writer.close()
+
 if __name__ == "__main__":
     # train()
     evluateothers()
