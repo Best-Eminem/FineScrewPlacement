@@ -9,3 +9,4 @@ runs/
 **/*.gif
 **/*.pth
 **/*.jpg
+**/*.nii.gz

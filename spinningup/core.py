@@ -1,7 +1,6 @@
 import numpy as np
 import scipy.signal
 from gym.spaces import Box, Discrete
-
 import torch
 import torch.nn as nn
 from torch.distributions.normal import Normal
@@ -56,15 +55,17 @@ class Actor(nn.Module):
     def _log_prob_from_distribution(self, pi, act):
         raise NotImplementedError
 
-    def forward(self, obs, act=None):
+    def forward(self, obs, a_Left=None, a_Right=None):
         # Produce action distributions for given observations, and 
         # optionally compute the log likelihood of given actions under
-        # those distributions.
-        pi = self._distribution(obs)
-        logp_a = None
-        if act is not None:
-            logp_a = self._log_prob_from_distribution(pi, act)
-        return pi, logp_a
+        # those distributions.      
+        pi_Left, pi_Right = self._distribution(obs)
+        logp_a_Left = None
+        logp_a_Right = None
+        if a_Left is not None and a_Right is not None:
+            logp_a_Left = self._log_prob_from_distribution(pi_Left, a_Left)
+            logp_a_Right = self._log_prob_from_distribution(pi_Right, a_Right)
+        return pi_Left, pi_Right, logp_a_Left, logp_a_Right
 
 
 class MLPCategoricalActor(Actor):
@@ -85,10 +86,12 @@ class MLPGaussianActor(Actor):
 
     def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
         super().__init__()
-        log_std = -0.5 * torch.ones(act_dim)
-        self.log_std = torch.nn.Parameter(log_std)
+        log_std_left = -0.5 * torch.ones(act_dim)
+        log_std_right = -0.5 * torch.ones(act_dim)
+        self.log_std_left = torch.nn.Parameter(log_std_left)
+        self.log_std_right = torch.nn.Parameter(log_std_right)
         # self.mu_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
-        self.mu_net = nn.Sequential(
+        self.conv_net = nn.Sequential(
             layer_init(nn.Conv3d(1, 32, 8, stride=4)),
             nn.ReLU(True),
             layer_init(nn.Conv3d(32, 64, 4, stride=2)),
@@ -96,6 +99,14 @@ class MLPGaussianActor(Actor):
             layer_init(nn.Conv3d(64, 64, 3, stride=1)),
             nn.ReLU(True),
             nn.Flatten(),
+        )
+        self.linearNetLeft = nn.Sequential(
+            layer_init(nn.Linear(64 * 16 * 6 * 4, 512)),
+            nn.ReLU(True),
+            layer_init(nn.Linear(512, act_dim), std=0.01),
+            # nn.Tanh(),
+        )
+        self.linearNetRight = nn.Sequential(
             layer_init(nn.Linear(64 * 16 * 6 * 4, 512)),
             nn.ReLU(True),
             layer_init(nn.Linear(512, act_dim), std=0.01),
@@ -103,9 +114,12 @@ class MLPGaussianActor(Actor):
         )
 
     def _distribution(self, obs):
-        mu = self.mu_net(obs / 2.0)
-        std = torch.exp(self.log_std)
-        return Normal(mu, std)
+        _flatten = self.conv_net(obs / 2.0)
+        mu_left = self.linearNetLeft(_flatten)
+        mu_right = self.linearNetRight(_flatten)
+        std_left = torch.exp(self.log_std_left)
+        std_right = torch.exp(self.log_std_right)
+        return Normal(mu_left, std_left), Normal(mu_right, std_right)
 
     def _log_prob_from_distribution(self, pi, act):
         return pi.log_prob(act).sum(axis=-1)    # Last axis sum needed for Torch Normal distribution
@@ -135,8 +149,7 @@ class MLPCritic(nn.Module):
 class MyMLPActorCritic(nn.Module):
 
 
-    def __init__(self, observation_shape, action_shape, 
-                 hidden_sizes=(64,64), activation=nn.Tanh):
+    def __init__(self, observation_shape, action_shape, hidden_sizes=(64,64), activation=nn.Tanh):
         super().__init__()
 
 
@@ -149,12 +162,17 @@ class MyMLPActorCritic(nn.Module):
 
     def step(self, obs):
         with torch.no_grad():
-            pi = self.pi._distribution(obs)
-            a = pi.sample()
+            pi_Left, pi_Right = self.pi._distribution(obs)
+            a_Left = pi_Left.sample()
+            a_Right = pi_Right.sample()
             # a = torch.clamp(a, min=-1.0, max=1.0)
-            logp_a = self.pi._log_prob_from_distribution(pi, a)
+            logp_a_Left = self.pi._log_prob_from_distribution(pi_Left, a_Left)
+            logp_a_Right = self.pi._log_prob_from_distribution(pi_Right, a_Right)
             v = self.v(obs)
-        return a.squeeze_(0).cpu().numpy() if len(a.shape) == 2 else a, v.cpu().numpy(), logp_a.cpu().numpy()
+        return a_Left.squeeze_(0).cpu().numpy() if len(a_Left.shape) == 2 else a_Left, \
+                a_Right.squeeze_(0).cpu().numpy() if len(a_Right.shape) == 2 else a_Right, \
+                v.cpu().numpy(), \
+                logp_a_Left.cpu().numpy(), logp_a_Right.cpu().numpy()
 
     def act(self, obs):
-        return self.step(obs)[0]
+        return self.step(obs)[0], self.step(obs)[1]

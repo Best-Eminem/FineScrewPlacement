@@ -13,7 +13,7 @@ def coorSpace2LngLat(ppoint, R=None):
         R = np.linalg.norm(ppoint)
     return np.arcsin(ppoint[2] / R), np.arctan(ppoint[1] / ppoint[0])
 
-def coorLngLat2Space(angles, R=1., default = True):
+def coorLngLat2Space(angles_L, angles_R, R=1., default = True):
     """返回旋转后的方向向量
 
     Args:
@@ -24,14 +24,22 @@ def coorLngLat2Space(angles, R=1., default = True):
     Returns:
         Output: ppoint(x,y,z)
     """
-    x = R * np.cos(np.deg2rad(angles[1])) * np.sin(np.deg2rad(angles[0]))
-    y = R * np.cos(np.deg2rad(angles[1])) * np.cos(np.deg2rad(angles[0]))
-    z = R * np.sin(np.deg2rad(angles[1]))
+    x_L = R * np.cos(np.deg2rad(angles_L[1])) * np.sin(np.deg2rad(angles_L[0]))
+    y_L = R * np.cos(np.deg2rad(angles_L[1])) * np.cos(np.deg2rad(angles_L[0]))
+    z_L = R * np.sin(np.deg2rad(angles_L[1]))
     if default:
-        if x>=0:
-            x = -x
-            y = -y
-    return np.array([x, y, z])
+        if x_L>=0:
+            x_L = -x_L
+            y_L = -y_L
+    
+    x_R = R * np.cos(np.deg2rad(angles_R[1])) * np.sin(np.deg2rad(angles_R[0]))
+    y_R = R * np.cos(np.deg2rad(angles_R[1])) * np.cos(np.deg2rad(angles_R[0]))
+    z_R = R * np.sin(np.deg2rad(angles_R[1]))
+    if default:
+        if x_R>=0:
+            x_R = -x_R
+            y_R = -y_R
+    return np.array([x_L, y_L, z_L]), np.array([x_R, y_R, z_R])
 
 def distEuclid(point1, point2):
     # 计算两点距离
@@ -86,7 +94,16 @@ def getEndpoint(spine_xyz, spine, cpoint, dirvector, R=0.8, line_thres=None, poi
         dist_[0:line_thres[0], :, :] = 0
         dist_[line_thres[1]+1:, :,:] = 0
 
-    online_points = np.where(dist_==3)
+    online_points = list(np.where(dist_==3))
+    uncontinuous_bound = None
+    for index in range(len(online_points[0])-1):
+        if (online_points[0][index+1] - online_points[0][index]) > 10:
+            uncontinuous_bound = index
+            break
+    if uncontinuous_bound!=None:
+        online_points[0] = online_points[0][:index+1]
+        online_points[1] = online_points[1][:index+1]
+        online_points[2] = online_points[2][:index+1]
     # if len(online_points[0]) == 0:
     #     print('cpoint:%d %d %d'% (cpoint[0], cpoint[1],cpoint[2]))
     minxv, minxv_ind = np.min(online_points[0]), np.where(online_points[0] == np.min(online_points[0]))
@@ -142,19 +159,18 @@ def lineInVerterbra(spine_xyz,spine, cpoint, start_point, end_point, point_dist,
         max_y, min_y = start_point[1], end_point[1]
     else: 
         max_y, min_y = end_point[1], start_point[1]
-    
     # 计算spine相对于line的距离，只取line上的部分点到spine的距离来计算螺钉最大半径
     dist_[:, 0:int((min_y+cpoint[1])/2), :] = np.inf
-    dist_[:, int((max_y+cpoint[1])/2):, :] = np.inf
+    dist_[:, int((max_y+cpoint[1])/2)+1:, :] = np.inf
     
     if radiu_thres is not None:
         # Todo 如果后面需要排除尾部的
         dist_[0:radiu_thres[0], :, :] = np.inf
         dist_[radiu_thres[1] + 1:, :, :] = np.inf
     # dist_ = dist_[start_point[0]:end_point[0]+1,:,:]
-    max_radius = np.min(dist_)
+    max_radius = np.min(dist_) if np.inf > np.min(dist_) > 1.0 else 1.0
     # 以下用于可视化验证
-    line_dist[np.where(spine<1)] = np.inf
+    line_dist[np.where(spine<1)] = np.inf #此行代码可以保证螺钉在椎体内
     ppp = np.where(line_dist < max_radius)
     x_ppp, y_ppp, z_ppp = [], [], []
     if start_point[0] >= end_point[0]:

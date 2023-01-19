@@ -1,6 +1,7 @@
 import numpy as np
 import sys
 import os
+import SimpleITK as sitk
 sys.path.append(os.getcwd())
 import torch
 from torch.optim import Adam
@@ -26,25 +27,29 @@ class PPOBuffer:
 
     def __init__(self, obs_dim, act_dim, size, gamma=0.99, lam=0.95):
         self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
-        self.act_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
+        self.act_L_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
+        self.act_R_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
         self.adv_buf = np.zeros(size, dtype=np.float32)
         self.rew_buf = np.zeros(size, dtype=np.float32)
         self.ret_buf = np.zeros(size, dtype=np.float32)
         self.val_buf = np.zeros(size, dtype=np.float32)
-        self.logp_buf = np.zeros(size, dtype=np.float32)
+        self.logp_a_Left_buf = np.zeros(size, dtype=np.float32)
+        self.logp_a_Right_buf = np.zeros(size, dtype=np.float32)
         self.gamma, self.lam = gamma, lam
         self.ptr, self.path_start_idx, self.max_size = 0, 0, size
 
-    def store(self, obs, act, rew, val, logp):
+    def store(self, obs, act_L, act_R, rew, val, logp_a_Left, logp_a_Right):
         """
         Append one timestep of agent-environment interaction to the buffer.
         """
         assert self.ptr < self.max_size     # buffer has to have room so you can store
         self.obs_buf[self.ptr] = obs
-        self.act_buf[self.ptr] = act
+        self.act_L_buf[self.ptr] = act_L
+        self.act_R_buf[self.ptr] = act_R
         self.rew_buf[self.ptr] = rew
         self.val_buf[self.ptr] = val
-        self.logp_buf[self.ptr] = logp
+        self.logp_a_Left_buf[self.ptr] = logp_a_Left
+        self.logp_a_Right_buf[self.ptr] = logp_a_Right
         self.ptr += 1
 
     def finish_path(self, last_val=0):
@@ -88,8 +93,8 @@ class PPOBuffer:
         # adv_mean, adv_std = mpi_statistics_scalar(self.adv_buf)
         adv_mean, adv_std = np.mean(self.adv_buf), np.std(self.adv_buf)
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
-        data = dict(obs=self.obs_buf, act=self.act_buf, ret=self.ret_buf,
-                    adv=self.adv_buf, logp=self.logp_buf)
+        data = dict(obs=self.obs_buf, act_L=self.act_L_buf, act_R=self.act_R_buf, ret=self.ret_buf,
+                    adv=self.adv_buf, logp_L=self.logp_a_Left_buf, logp_R=self.logp_a_Right_buf)
         return {k: torch.as_tensor(v, dtype=torch.float32) for k,v in data.items()}
 
 def build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, input_y=80, input_x=160):
@@ -119,37 +124,49 @@ def evluateothers(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=di
         os.makedirs(args.snapshot_dir)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    dataDirs = ['spineData/sub-verse500_dir-ax_L1_seg-vert_msk.nii.gz',
-               'spineData/sub-verse500_dir-ax_L2_seg-vert_msk.nii.gz',
-               'spineData/sub-verse500_dir-ax_L3_seg-vert_msk.nii.gz',
-               'spineData/sub-verse504_dir-iso_L1_seg-vert_msk.nii.gz',
-               'spineData/sub-verse504_dir-iso_L2_seg-vert_msk.nii.gz',
-               'spineData/sub-verse504_dir-iso_L3_seg-vert_msk.nii.gz',
-                r'spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz',
-                r'spineData/sub-verse835_dir-iso_L2_seg-vert_msk.nii.gz',
-                r'spineData/sub-verse835_dir-iso_L3_seg-vert_msk.nii.gz',
-                r'spineData/sub-verse835_dir-iso_L4_seg-vert_msk.nii.gz',
-                r'spineData/sub-verse821_L1_seg-vert_msk.nii.gz',
-                r'spineData/sub-verse821_L2_seg-vert_msk.nii.gz',
-                r'spineData/sub-verse821_L3_seg-vert_msk.nii.gz',
-                r'spineData/sub-verse821_L5_seg-vert_msk.nii.gz']
-    pedicle_points = np.asarray([[[40,67,58],[40,67,105]],
-                                [[27,64,54],[28,65,102]],
-                                [[36,64,55],[37,68,108]],
-                                [[28,44,62],[30,44,96]],
-                                [[27,46,64],[29,47,99]],
-                                [[19,43,60],[20,46,100]],
-                                # ])
-                                [[25,56,69],[25,57,111]],
-                                 [[31,57,63],[30,58,106]],
-                                 [[29,60,62],[25,59,109]],
-                                 [[26,55,60],[24,54,113]],
-                                 [[30,69,68],[29,69,115]],
-                                 [[27,66,63],[27,67,111]],
-                                 [[21,64,60],[23,69,109]],
-                                 [[45,66,54],[38,70,117]]])
-
+    dataDirs = [#'spineData/sub-verse500_dir-ax_L1_seg-vert_msk.nii.gz',
+            #    'spineData/sub-verse500_dir-ax_L2_seg-vert_msk.nii.gz',
+            #    'spineData/sub-verse500_dir-ax_L3_seg-vert_msk.nii.gz',
+            #    'spineData/sub-verse504_dir-iso_L1_seg-vert_msk.nii.gz',
+            #    'spineData/sub-verse504_dir-iso_L2_seg-vert_msk.nii.gz',
+            #    'spineData/sub-verse504_dir-iso_L3_seg-vert_msk.nii.gz',
+            #     'spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz',
+            #     'spineData/sub-verse835_dir-iso_L2_seg-vert_msk.nii.gz',
+            #     'spineData/sub-verse835_dir-iso_L3_seg-vert_msk.nii.gz',
+            #     'spineData/sub-verse835_dir-iso_L4_seg-vert_msk.nii.gz',
+            #     'spineData/sub-verse821_L1_seg-vert_msk.nii.gz',
+            #     'spineData/sub-verse821_L2_seg-vert_msk.nii.gz',
+            #     'spineData/sub-verse821_L3_seg-vert_msk.nii.gz',
+            #     'spineData/sub-verse821_L5_seg-vert_msk.nii.gz']
+                  'spineData/sub-verse621_L1_ALL_msk.nii.gz',
+                  'spineData/sub-verse621_L2_ALL_msk.nii.gz',
+                  'spineData/sub-verse621_L3_ALL_msk.nii.gz',
+                  'spineData/sub-verse621_L4_ALL_msk.nii.gz',
+                  'spineData/sub-verse621_L5_ALL_msk.nii.gz'
+                  ]
+    # pedicle_points = np.asarray([[[40,67,58],[40,67,105]],
+    #                             [[27,64,54],[28,65,102]],
+    #                             [[36,64,55],[37,68,108]],
+    #                             [[28,44,62],[30,44,96]],
+    #                             [[27,46,64],[29,47,99]],
+    #                             [[19,43,60],[20,46,100]],
+    #                             # ])
+    #                             [[25,56,69],[25,57,111]],
+    #                              [[31,57,63],[30,58,106]],
+    #                              [[29,60,62],[25,59,109]],
+    #                              [[26,55,60],[24,54,113]],
+    #                              [[30,69,68],[29,69,115]],
+    #                              [[27,66,63],[27,67,111]],
+    #                              [[21,64,60],[23,69,109]],
+    #                              [[45,66,54],[38,70,117]]])
+    pedicle_points = np.asarray([[[35,47,65],[36,47,105]],
+                                [[36,48,62],[38,48,102]],
+                                 [[38,47,62],[39,47,104]],
+                                 [[43,48,60],[44,48,107]],
+                                 [[48,52,60],[46,51,122]]])
+    index = 0
     for dataDir, pedicle_point in zip(dataDirs, pedicle_points):
+        index += 1
         dataDir = os.path.join(os.getcwd(), dataDir)
         pedicle_point_in_zyx = True #坐标是zyx形式吗？
         spine_data = build_data_load(dataDir, pedicle_point, pedicle_point_in_zyx, input_z=64, input_y=80, input_x=160) #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
@@ -174,17 +191,24 @@ def evluateothers(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=di
             step += 1
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action = ac.act(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
+                action_left, action_right = ac.act(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
             # TRY NOT TO MODIFY: execute the game and log data.
-            _, reward, done, others, o = envs.step(action.squeeze_(0).cpu().numpy() if len(action.shape) == 2 else action)
+            _, reward, done, others, o = envs.step(action_left.squeeze_(0).cpu().numpy() if len(action_left.shape) == 2 else action_left, \
+                                                action_right.squeeze_(0).cpu().numpy() if len(action_right.shape) == 2 else action_right)
             o, next_done = torch.Tensor(o).to(device), torch.Tensor([1.] if done else [0.]).to(device)
             rewards = rewards + reward
 
-            info = {'reward': rewards, 'r': reward, 'len_delta': others['len_delta'], 'radiu_delta': others['radius_delta'],
-                    'epoch': 0, 'frame': step, 'action':'{:.3f}, {:.3f}'.format(action[0], action[1])}
+            info = {'reward': rewards, 'r': reward, 'len_delta_L': others['len_delta_L'], 'radiu_delta_L': others['radius_delta_L'],
+                'len_delta_R': others['len_delta_R'], 'radiu_delta_R': others['radius_delta_R'],
+                'epoch': 0, 'frame': step, 
+                'action_left':'{:.3f}, {:.3f}'.format(action_left[0], action_left[1]),
+                'action_right':'{:.3f}, {:.3f}'.format(action_right[0], action_right[1])}
 
             fig = envs.render_(fig, info, is_vis=False, is_save_gif=True, img_save_path=args.imgs_dir)
-
+            if index == 5 and 3.14*envs.state_matrix[2]*envs.state_matrix[0]*envs.state_matrix[0] > 4600:
+                break
+        state3D_itk = sitk.GetImageFromArray(np.transpose(envs.state3D_array, (2, 1, 0)))
+        sitk.WriteImage(state3D_itk, os.path.join(args.imgs_dir ,os.path.basename(dataDir)))
         images_to_video(args.imgs_dir, '*.jpg', isDelete=True, savename = os.path.basename(dataDir))
 
 def evaluate(args, envs, agent, epoch):
@@ -198,23 +222,28 @@ def evaluate(args, envs, agent, epoch):
         step += 1
         # ALGO LOGIC: action logic
         with torch.no_grad():
-            action = agent.act(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
+            action_left, action_right = agent.act(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
         # TRY NOT TO MODIFY: execute the game and log data.
-        _, reward, done, others, o = envs.step(action.squeeze_(0).cpu().numpy() if len(action.shape) == 2 else action)
+        _, reward, done, others, o = envs.step(action_left.squeeze_(0).cpu().numpy() if len(action_left.shape) == 2 else action_left, \
+                                                action_right.squeeze_(0).cpu().numpy() if len(action_right.shape) == 2 else action_right)
         o, next_done = torch.Tensor(o).to(device), torch.Tensor([1.] if done else [0.]).to(device)
         rewards = rewards + reward
 
-        info = {'reward': rewards, 'r': reward, 'len_delta': others['len_delta'], 'radiu_delta': others['radius_delta'],
-                'epoch': 0, 'frame': step, 'action':'{:.3f}, {:.3f}'.format(action[0], action[1])}
+        info = {'reward': rewards, 'r': reward, 'len_delta_L': others['len_delta_L'], 'radiu_delta_L': others['radius_delta_L'],
+                'len_delta_R': others['len_delta_R'], 'radiu_delta_R': others['radius_delta_R'],
+                'epoch': 0, 'frame': step, 
+                'action_left':'{:.3f}, {:.3f}'.format(action_left[0], action_left[1]),
+                'action_right':'{:.3f}, {:.3f}'.format(action_right[0], action_right[1])}
 
         fig = envs.render_(fig, info, is_vis=False, is_save_gif=True, img_save_path=args.imgs_dir)
-
+    # state3D_itk = sitk.GetImageFromArray(envs.state3D_array)
+    # sitk.WriteImage(state3D_itk, os.path.join(args.imgs_dir ,os.path.basename(dataDir)))
     images_to_video(args.imgs_dir, '*.jpg', isDelete=True, savename = 'Update%d'%(epoch))
 
 def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed=0, 
         steps_per_epoch=100, epochs=400, gamma=0.99, clip_ratio=0.2, pi_lr=1e-4,
         vf_lr=1e-3, train_pi_iters=10, train_v_iters=10, lam=0.97, max_ep_len=100,
-        target_kl=0.05, logger_kwargs=dict(), save_freq=10):
+        target_kl=0.05, logger_kwargs=dict(), save_freq=20):
     """
     Proximal Policy Optimization (by clipping), 
 
@@ -341,26 +370,62 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
            'reset':{'rdrange':[-90, 90],
                     'state_shape':(160, 80, 64)},
            'step':{'rotate_mag':[5, 5]},}
+
+    print(cfg)
+    print(args)
     # Random seed
     # seed += 10000 * proc_id()
     torch.manual_seed(seed)
     np.random.seed(seed)
-    dataDirs = [r'spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz',
-                r'spineData/sub-verse835_dir-iso_L2_seg-vert_msk.nii.gz',
-                r'spineData/sub-verse835_dir-iso_L3_seg-vert_msk.nii.gz',
-                r'spineData/sub-verse835_dir-iso_L4_seg-vert_msk.nii.gz',
-                r'spineData/sub-verse821_L1_seg-vert_msk.nii.gz',
-                r'spineData/sub-verse821_L2_seg-vert_msk.nii.gz',
-                r'spineData/sub-verse821_L3_seg-vert_msk.nii.gz',]
-                # r'spineData/sub-verse821_L5_seg-vert_msk.nii.gz']
-    pedicle_points = np.asarray([[[25,56,69],[25,57,111]],
-                                [[31,57,63],[30,58,106]],
-                                 [[29,60,62],[25,59,109]],
-                                 [[26,55,60],[24,54,113]],
-                                 [[30,69,68],[29,69,115]],
-                                 [[27,66,63],[27,67,111]],
-                                 [[21,64,60],[23,69,109]]])
-                                #  [[45,66,54],[38,70,117]]])
+    dataDirs = [r'spineData/sub-verse500_dir-ax_L1_ALL_msk.nii.gz',
+                r'spineData/sub-verse506_dir-iso_L1_ALL_msk.nii.gz',
+                r'spineData/sub-verse521_dir-ax_L1_ALL_msk.nii.gz',
+                r'spineData/sub-verse621_L1_ALL_msk.nii.gz',
+
+                r'spineData/sub-verse518_dir-ax_L2_ALL_msk.nii.gz',
+                r'spineData/sub-verse536_dir-ax_L2_ALL_msk.nii.gz',
+                r'spineData/sub-verse586_dir-iso_L2_ALL_msk.nii.gz',
+                r'spineData/sub-verse621_L2_ALL_msk.nii.gz',
+
+                r'spineData/sub-verse510_dir-ax_L3_ALL_msk.nii.gz',
+                r'spineData/sub-verse518_dir-ax_L3_ALL_msk.nii.gz',
+                r'spineData/sub-verse818_dir-ax_L3_ALL_msk.nii.gz',
+                r'spineData/sub-verse621_L3_ALL_msk.nii.gz',
+
+                r'spineData/sub-verse514_dir-ax_L4_ALL_msk.nii.gz',
+                r'spineData/sub-verse534_dir-iso_L4_ALL_msk.nii.gz',
+                r'spineData/sub-verse537_dir-iso_L4_ALL_msk.nii.gz',
+                r'spineData/sub-verse621_L4_ALL_msk.nii.gz',
+                
+                r'spineData/sub-verse505_L5_ALL_msk.nii.gz',
+                r'spineData/sub-verse510_dir-ax_L5_ALL_msk.nii.gz',
+                r'spineData/sub-verse614_L5_ALL_msk.nii.gz',
+                r'spineData/sub-verse621_L5_ALL_msk.nii.gz',]
+    pedicle_points = np.asarray([[[39,49,58],[39,48,105]],
+                                [[38,43,67],[38,43,108]],
+                                [[30,46,65],[30,46,108]],
+                                [[35,47,65],[36,47,105]],
+                                
+                                [[33,42,64],[37,44,103]],
+                                [[33,40,57],[31,45,96]],
+                                [[33,43,66],[36,43,101]],
+                                [[36,48,62],[38,48,102]],
+                                 
+                                [[33,44,67],[33,42,101]],
+                                [[33,43,59],[38,45,101]],
+                                [[33,47,61],[36,46,108]],
+                                [[38,47,62],[39,47,104]],
+                                 
+                                [[59,45,60],[51,44,109]],
+                                [[35,43,63],[33,46,105]],
+                                [[46,44,63],[46,44,101]],
+                                [[43,48,60],[44,48,107]],
+                                 
+                                [[34,43,61],[34,41,102]],
+                                [[45,52,68],[45,43,110]],
+                                [[42,45,64],[40,44,113]],
+                                [[48,52,60],[46,51,122]],
+                                 ])
     
     # Instantiate environment
     spine_datas = []
@@ -396,22 +461,32 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
 
     # Set up function for computing PPO policy loss
     def compute_loss_pi(data):
-        obs, act, adv, logp_old = data['obs'].unsqueeze(1).to(device), data['act'].to(device), data['adv'].to(device), data['logp'].to(device)
+        obs, act_L, act_R, adv, logp_old_L, logp_old_R = data['obs'].unsqueeze(1).to(device), data['act_L'].to(device), data['act_R'].to(device), data['adv'].to(device), data['logp_L'].to(device), data['logp_R'].to(device)
 
         # Policy loss
-        pi, logp = ac.pi(obs, act)
-        ratio = torch.exp(logp - logp_old)
-        clip_adv = torch.clamp(ratio, 1-clip_ratio, 1+clip_ratio) * adv
-        loss_pi = -(torch.min(ratio * adv, clip_adv)).mean()
+        pi_L, pi_R, logp_L, logp_R = ac.pi(obs, act_L, act_R)
+
+        ratio_L = torch.exp(logp_L - logp_old_L)
+        clip_adv_L = torch.clamp(ratio_L, 1-clip_ratio, 1+clip_ratio) * adv
+        loss_pi_L = -(torch.min(ratio_L * adv, clip_adv_L)).mean()
+
+        ratio_R = torch.exp(logp_R - logp_old_R)
+        clip_adv_R = torch.clamp(ratio_R, 1-clip_ratio, 1+clip_ratio) * adv
+        loss_pi_R = -(torch.min(ratio_R * adv, clip_adv_R)).mean()
 
         # Useful extra info
-        approx_kl = (logp_old - logp).mean().item()
-        ent = pi.entropy().mean().item()
-        clipped = ratio.gt(1+clip_ratio) | ratio.lt(1-clip_ratio)
-        clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item()
-        pi_info = dict(kl=approx_kl, ent=ent, cf=clipfrac)
+        approx_kl_L = (logp_old_L - logp_L).mean().item()
+        ent_L = pi_L.entropy().mean().item()
+        clipped_L = ratio_L.gt(1+clip_ratio) | ratio_L.lt(1-clip_ratio)
+        clipfrac_L = torch.as_tensor(clipped_L, dtype=torch.float32).mean().item()
 
-        return loss_pi, pi_info
+        approx_kl_R = (logp_old_R - logp_R).mean().item()
+        ent_R = pi_R.entropy().mean().item()
+        clipped_R = ratio_R.gt(1+clip_ratio) | ratio_R.lt(1-clip_ratio)
+        clipfrac_R = torch.as_tensor(clipped_R, dtype=torch.float32).mean().item()
+        pi_info = dict(kl=(approx_kl_L+approx_kl_R)/2, ent=(ent_L+ent_R)/2, cf=(clipfrac_L+clipfrac_R)/2)
+
+        return (loss_pi_L+loss_pi_R)/2, pi_info
 
     # Set up function for computing value loss
     def compute_loss_v(data):
@@ -478,16 +553,16 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
         pi_optimizer.param_groups[0]["lr"] = lrnow
         vf_optimizer.param_groups[0]["lr"] = lrnow
         for t in range(local_steps_per_epoch):
-            a, v, logp = ac.step(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
+            a_Left, a_Right, v, logp_a_Left, logp_a_Right = ac.step(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
 
             # next_o, r, d, _ = env.step(a)
-            _, r, d, info, next_o = env.step(a)
+            _, r, d, info, next_o = env.step(a_Left, a_Right)
             ep_ret += r
             ep_len += 1
 
             # save and log
             o = o.squeeze(0).squeeze(0).cpu().numpy() if len(o.shape) == 5 else o
-            buf.store(o, a, r, v, logp)
+            buf.store(o, a_Left, a_Right, r, v, logp_a_Left, logp_a_Right)
             # logger.store(VVals=v)
             
             # Update obs (critical!)
@@ -507,7 +582,7 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
                     print('Warning: trajectory cut off by epoch at %d steps.'%ep_len, flush=True)
                 # if trajectory didn't reach terminal state, bootstrap value target
                 if epoch_ended: #or timeout:
-                    _, v, _ = ac.step(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
+                    _, _, v, _, _ = ac.step(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
                 else:
                     v = 0
                 buf.finish_path(v)
@@ -519,7 +594,7 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
                     _, _= env.reset(random_reset = False) # 每回合结束时把所所有环境reset
                 # env_index = (epoch)%len(envs)
                 # env = envs[env_index]
-                if epoch%50 == 0:
+                if epoch%10 == 0:
                     env_index += 1
                 env = envs[env_index%len(envs)]
                 _, o = env.reset(random_reset = False)
@@ -544,7 +619,7 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
         # writer.add_scalar("losses/explained_variance", explained_var, global_step)
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-        if epoch % 20 == 0:
+        if epoch % save_freq == 0:
             torch.save(ac.state_dict(), args.snapshot_dir+'/ppo_%d.pth' % (epoch))
             ac = ac.eval()
             evaluate(args, env, ac, epoch)
@@ -578,10 +653,11 @@ if __name__ == '__main__':
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--cpu', type=int, default=4)
     parser.add_argument('--steps', type=int, default=100)
-    parser.add_argument('--epochs', type=int, default=1000)
+    parser.add_argument('--epochs', type=int, default=500)
+    parser.add_argument('--save_freq', type=int, default=20)
     parser.add_argument('--exp_name', type=str, default='ppo')
-    parser.add_argument('--imgs_dir', type=str, default='./spinningup/spinningup_imgs_multyenvs')
-    parser.add_argument('--snapshot_dir', type=str, default='./spinningup/spinningup_snapshot_multyenvs')
+    parser.add_argument('--imgs_dir', type=str, default='./spinningup/spinningup_20imgs_volume')
+    parser.add_argument('--snapshot_dir', type=str, default='./spinningup/spinningup_20snapshot_volume')
     parser.add_argument('--KL', type=str, default='No KL')
     parser.add_argument('--clip', type=str, default='clip in env')
     args = parser.parse_args()
@@ -594,6 +670,6 @@ if __name__ == '__main__':
     ppo(args, build_Env, actor_critic=core.MyMLPActorCritic,
         ac_kwargs=dict(hidden_sizes=[args.hid]*args.l), gamma=args.gamma, 
         seed=args.seed, steps_per_epoch=args.steps, epochs=args.epochs,
-        logger_kwargs=logger_kwargs)
+        save_freq=args.save_freq, logger_kwargs=logger_kwargs)
     
     # evluateothers(args, build_Env, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(hidden_sizes=[args.hid]*args.l))
