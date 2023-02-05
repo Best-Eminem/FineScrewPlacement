@@ -113,8 +113,6 @@ class SpineEnv(gym.Env):
         self.state_matrix = np.asarray(state_list, dtype = np.float32)
         # self.state_matrix中存储的是degree，而送入网络时的是弧度
         state_ = self.state_matrix * 1.0
-        # state_[1:3] = np.deg2rad(state_[1:3])
-        state_[4:] = np.deg2rad(state_[4:])
         return np.asarray(state_, dtype=np.float32), self.normalize(state_3D)
 
     def stepPhysics(self, state_matrix, delta_degree_L, delta_degree_R, delta_cpoint = None):
@@ -226,11 +224,8 @@ class SpineEnv(gym.Env):
         len_delta_L, len_delta_R, radius_delta_L, radius_delta_R = self.getReward(self.state_matrix)
         # reward为当前螺钉长度减去一个base值
         # reward = (self.state_matrix[2] + self.state_matrix[3])/ (70*2) 
-        reward = (3.14*(self.state_matrix[2]*self.state_matrix[0]*self.state_matrix[0])+(self.state_matrix[3]*self.state_matrix[1]*self.state_matrix[1])) / (7000.0*2) #reward为体积
-        
+        reward = (3.14*(self.state_matrix[2]*self.state_matrix[0]*self.state_matrix[0])+3.14*(self.state_matrix[3]*self.state_matrix[1]*self.state_matrix[1])) / (7000.0*2) #reward为体积
         state_ = self.state_matrix * 1.0
-        # state_[1:3] = np.deg2rad(state_[1:3])
-        state_[4:] = np.deg2rad(state_[4:])
         return np.asarray(state_, dtype=np.float32), reward, done, \
             {'len_delta_L': len_delta_L, 'len_delta_R': len_delta_R, 'radius_delta_L': radius_delta_L, 'radius_delta_R': radius_delta_R}, self.normalize(state_3D)
 
@@ -305,31 +300,30 @@ class SpineEnv(gym.Env):
         state_3D[endpoints_R['radiu_p']] = 2
         return np.array(state_3D, dtype=np.float32)
 
-    def simulate_step_batch(self, state_nows, actions):
-        state_nows = state_nows.numpy()
-        actions = actions.detach().numpy()
-        next_3d_list = []
-        for state_now, action in zip(state_nows, actions):
-            assert self.action_space.contains(action), \
-                "%r (%s) invalid" % (action, type(action))
-            # ------------------------------------------
-            #Cast action to float to strip np trappings
-            rotate_deg = self.rotate_mag * action[0:2]
-            # move_cp = self.trans_mag * action[2:]
-            # step forward
-            this_degree = self.stepPhysics(state_now, rotate_deg, delta_cpoint = None)
-            this_dirpoint = utils3.coorLngLat2Space(this_degree, R=1., default = True)
-            dist_mat_point = utils3.spine2point(self.mask_coards, self.mask_array, self.centerPointL)
-            dist_mat_line = utils3.spine2line(self.mask_coards, self.mask_array, self.centerPointL, this_dirpoint)
-            max_radius, line_len, endpoints = utils3.getLenRadiu(self.mask_coards, self.mask_array, self.centerPointL,
-                                                                    this_dirpoint, R=1,
-                                                                    line_thres=self.line_thres,
-                                                                    radiu_thres=self.radiu_thres, point_dist=dist_mat_point, line_dist=dist_mat_line)
-            
-            state_list = [max_radius, line_len]
-            state_list.extend(this_degree)
-            state_3D = self.draw_state(endpoints)
-            next_3d_list.append(state_3D)
-        next_3d_list = torch.from_numpy(np.array(next_3d_list, dtype=np.float32))
-        next_3d_list.unsqueeze_(1)
-        return next_3d_list
+    def simulate_reward(self, radian_L, radian_R):
+        this_degree_L, this_degree_R = np.rad2deg(radian_L), np.rad2deg(radian_R)
+        this_dirpoint_L, this_dirpoint_R = utils3.coorLngLat2Space(this_degree_L, this_degree_R, R=1., default = True)
+        dist_mat_point_L = utils3.spine2point(self.mask_coards, self.mask_array, self.centerPointL)
+        dist_mat_point_R = utils3.spine2point(self.mask_coards, self.mask_array, self.centerPointR)
+        dist_mat_line_L = utils3.spine2line(self.mask_coards, self.mask_array, self.centerPointL, this_dirpoint_L)
+        dist_mat_line_R = utils3.spine2line(self.mask_coards, self.mask_array, self.centerPointR, this_dirpoint_R)
+        max_radius_L, line_len_L, endpoints_L = utils3.getLenRadiu \
+            (self.mask_coards, self.mask_array, self.centerPointL, this_dirpoint_L, R=1, line_thres=self.line_thres,
+             radiu_thres=self.radiu_thres, point_dist=dist_mat_point_L, line_dist=dist_mat_line_L)
+        max_radius_R, line_len_R, endpoints_R = utils3.getLenRadiu \
+            (self.mask_coards, self.mask_array, self.centerPointR, this_dirpoint_R, R=1, line_thres=self.line_thres,
+             radiu_thres=self.radiu_thres, point_dist=dist_mat_point_R, line_dist=dist_mat_line_R)
+
+        state_list = [max_radius_L, max_radius_R, line_len_L, line_len_R]
+        state_list.extend(this_degree_L)
+        state_list.extend(this_degree_R)
+        state_matrix = np.asarray(state_list, dtype=np.float32)
+        # self.state_matrix中存储的是degree，而送入网络时的是弧度
+        if max_radius_L < 0.: # todo 仍需要再思考
+            line_len_L = 0.01
+            state_matrix[2] = 0.01
+        if max_radius_R < 0.: # todo 仍需要再思考
+            line_len_R = 0.01
+            state_matrix[3] = 0.01
+        reward = (3.14*(self.state_matrix[2]*self.state_matrix[0]*self.state_matrix[0])+3.14*(self.state_matrix[3]*self.state_matrix[1]*self.state_matrix[1])) / (7000.0*2) #reward为体积      
+        return reward

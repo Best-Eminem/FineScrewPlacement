@@ -83,7 +83,6 @@ class MLPCategoricalActor(Actor):
 
 
 class MLPGaussianActor(Actor):
-
     def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
         super().__init__()
         log_std_left = -0.5 * torch.ones(act_dim)
@@ -124,9 +123,35 @@ class MLPGaussianActor(Actor):
     def _log_prob_from_distribution(self, pi, act):
         return pi.log_prob(act).sum(axis=-1)    # Last axis sum needed for Torch Normal distribution
 
+class LTOMLPGaussianActor(Actor):
+    def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
+        super().__init__()
+        log_std_left = -0.5 * torch.ones(act_dim)
+        log_std_right = -0.5 * torch.ones(act_dim)
+        self.log_std_left = torch.nn.Parameter(log_std_left)
+        self.log_std_right = torch.nn.Parameter(log_std_right)
+        self.linearNetLeft = nn.Sequential(
+            layer_init(nn.Linear(125, 125)),
+            nn.Softplus(),
+            layer_init(nn.Linear(125, act_dim), std=0.01),
+        )
+        self.linearNetRight = nn.Sequential(
+            layer_init(nn.Linear(125, 125)),
+            nn.Softplus(),
+            layer_init(nn.Linear(125, act_dim), std=0.01),
+        )
+
+    def _distribution(self, obs):
+        mu_left = self.linearNetLeft(obs)
+        mu_right = self.linearNetRight(obs)
+        std_left = torch.exp(self.log_std_left)
+        std_right = torch.exp(self.log_std_right)
+        return Normal(mu_left, std_left), Normal(mu_right, std_right)
+
+    def _log_prob_from_distribution(self, pi, act):
+        return pi.log_prob(act).sum(axis=-1)    # Last axis sum needed for Torch Normal distribution
 
 class MLPCritic(nn.Module):
-
     def __init__(self, obs_dim, hidden_sizes, activation):
         super().__init__()
         self.v_net = nn.Sequential(
@@ -145,21 +170,26 @@ class MLPCritic(nn.Module):
     def forward(self, obs):
         return torch.squeeze(self.v_net(obs / 2.0), -1) # Critical to ensure v has right shape.
 
+class LTOMLPCritic(nn.Module):
+    def __init__(self, obs_dim, hidden_sizes, activation):
+        super().__init__()
+        self.v_net = nn.Sequential(
+            layer_init(nn.Linear(125, 125)),
+            nn.Softplus(),
+            layer_init(nn.Linear(125, 1), std=1),
+        )
+
+    def forward(self, obs):
+        return torch.squeeze(self.v_net(obs), -1) # Critical to ensure v has right shape.
 
 class MyMLPActorCritic(nn.Module):
-
-
     def __init__(self, observation_shape, action_shape, hidden_sizes=(64,64), activation=nn.Tanh):
         super().__init__()
-
-
         # policy builder depends on action space
         # if isinstance(action_space, Box):
-        self.pi = MLPGaussianActor(observation_shape, action_shape[0], hidden_sizes, activation)
-
+        self.pi = LTOMLPGaussianActor(observation_shape, action_shape[0], hidden_sizes, activation)
         # build value function
-        self.v  = MLPCritic(observation_shape, hidden_sizes, activation)
-
+        self.v  = LTOMLPCritic(observation_shape, hidden_sizes, activation)
     def step(self, obs):
         with torch.no_grad():
             pi_Left, pi_Right = self.pi._distribution(obs)
@@ -169,8 +199,8 @@ class MyMLPActorCritic(nn.Module):
             logp_a_Left = self.pi._log_prob_from_distribution(pi_Left, a_Left)
             logp_a_Right = self.pi._log_prob_from_distribution(pi_Right, a_Right)
             v = self.v(obs)
-        return a_Left.squeeze_(0).cpu().numpy() if len(a_Left.shape) == 2 else a_Left, \
-                a_Right.squeeze_(0).cpu().numpy() if len(a_Right.shape) == 2 else a_Right, \
+        return a_Left.squeeze_(0).cpu().numpy() if len(a_Left.shape) == 2 else a_Left.cpu().numpy(), \
+                a_Right.squeeze_(0).cpu().numpy() if len(a_Right.shape) == 2 else a_Right.cpu().numpy(), \
                 v.cpu().numpy(), \
                 logp_a_Left.cpu().numpy(), logp_a_Right.cpu().numpy()
 

@@ -1,4 +1,5 @@
 import numpy as np
+import multiprocessing
 import sys
 import os
 import SimpleITK as sitk
@@ -10,6 +11,7 @@ import matplotlib.pyplot as plt
 import time
 import core as core
 from tqdm import tqdm
+from multiprocessing import Manager,Process
 from logx import EpochLogger
 from env import SingleSpineEnv
 from dataLoad.loadNii import get_spinedata
@@ -29,6 +31,8 @@ class PPOBuffer:
         self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
         self.act_L_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
         self.act_R_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
+        self.L_grad = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
+        self.R_grad = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
         self.adv_buf = np.zeros(size, dtype=np.float32)
         self.rew_buf = np.zeros(size, dtype=np.float32)
         self.ret_buf = np.zeros(size, dtype=np.float32)
@@ -38,7 +42,7 @@ class PPOBuffer:
         self.gamma, self.lam = gamma, lam
         self.ptr, self.path_start_idx, self.max_size = 0, 0, size
 
-    def store(self, obs, act_L, act_R, rew, val, logp_a_Left, logp_a_Right):
+    def store(self, obs, act_L, act_R, rew, val, logp_a_Left, logp_a_Right, L_grad, R_grad):
         """
         Append one timestep of agent-environment interaction to the buffer.
         """
@@ -50,6 +54,8 @@ class PPOBuffer:
         self.val_buf[self.ptr] = val
         self.logp_a_Left_buf[self.ptr] = logp_a_Left
         self.logp_a_Right_buf[self.ptr] = logp_a_Right
+        self.L_grad[self.ptr] = L_grad
+        self.R_grad[self.ptr] = R_grad
         self.ptr += 1
 
     def finish_path(self, last_val=0):
@@ -94,7 +100,8 @@ class PPOBuffer:
         adv_mean, adv_std = np.mean(self.adv_buf), np.std(self.adv_buf)
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
         data = dict(obs=self.obs_buf, act_L=self.act_L_buf, act_R=self.act_R_buf, ret=self.ret_buf,
-                    adv=self.adv_buf, logp_L=self.logp_a_Left_buf, logp_R=self.logp_a_Right_buf)
+                    adv=self.adv_buf, logp_L=self.logp_a_Left_buf, logp_R=self.logp_a_Right_buf,
+                    L_grad=self.L_grad, R_grad=self.R_grad)
         return {k: torch.as_tensor(v, dtype=torch.float32) for k,v in data.items()}
 
 def build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, input_y=80, input_x=160):
@@ -124,47 +131,31 @@ def evluateothers(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=di
         os.makedirs(args.snapshot_dir)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    dataDirs = [#'spineData/sub-verse500_dir-ax_L1_seg-vert_msk.nii.gz',
-            #    'spineData/sub-verse500_dir-ax_L2_seg-vert_msk.nii.gz',
-            #    'spineData/sub-verse500_dir-ax_L3_seg-vert_msk.nii.gz',
-            #    'spineData/sub-verse504_dir-iso_L1_seg-vert_msk.nii.gz',
-            #    'spineData/sub-verse504_dir-iso_L2_seg-vert_msk.nii.gz',
-            #    'spineData/sub-verse504_dir-iso_L3_seg-vert_msk.nii.gz',
-            #     'spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz',
-            #     'spineData/sub-verse835_dir-iso_L2_seg-vert_msk.nii.gz',
-            #     'spineData/sub-verse835_dir-iso_L3_seg-vert_msk.nii.gz',
-            #     'spineData/sub-verse835_dir-iso_L4_seg-vert_msk.nii.gz',
-            #     'spineData/sub-verse821_L1_seg-vert_msk.nii.gz',
-            #     'spineData/sub-verse821_L2_seg-vert_msk.nii.gz',
-            #     'spineData/sub-verse821_L3_seg-vert_msk.nii.gz',
-            #     'spineData/sub-verse821_L5_seg-vert_msk.nii.gz']
-                  'spineData/sub-verse621_L1_ALL_msk.nii.gz',
-                  'spineData/sub-verse621_L2_ALL_msk.nii.gz',
-                  'spineData/sub-verse621_L3_ALL_msk.nii.gz',
-                  'spineData/sub-verse621_L4_ALL_msk.nii.gz',
-                  'spineData/sub-verse621_L5_ALL_msk.nii.gz'
-                  ]
-    # pedicle_points = np.asarray([[[40,67,58],[40,67,105]],
-    #                             [[27,64,54],[28,65,102]],
-    #                             [[36,64,55],[37,68,108]],
-    #                             [[28,44,62],[30,44,96]],
-    #                             [[27,46,64],[29,47,99]],
-    #                             [[19,43,60],[20,46,100]],
-    #                             # ])
-    #                             [[25,56,69],[25,57,111]],
-    #                              [[31,57,63],[30,58,106]],
-    #                              [[29,60,62],[25,59,109]],
-    #                              [[26,55,60],[24,54,113]],
-    #                              [[30,69,68],[29,69,115]],
-    #                              [[27,66,63],[27,67,111]],
-    #                              [[21,64,60],[23,69,109]],
-    #                              [[45,66,54],[38,70,117]]])
+    # dataDirs = [
+    #               'spineData/sub-verse621_L1_ALL_msk.nii.gz',
+    #               'spineData/sub-verse621_L2_ALL_msk.nii.gz',
+    #               'spineData/sub-verse621_L3_ALL_msk.nii.gz',
+    #               'spineData/sub-verse621_L4_ALL_msk.nii.gz',
+    #               'spineData/sub-verse621_L5_ALL_msk.nii.gz'
+    #               ]
+    # pedicle_points = np.asarray([[[35,47,65],[36,47,105]],
+    #                             [[36,48,62],[38,48,102]],
+    #                              [[38,47,62],[39,47,104]],
+    #                              [[43,48,60],[44,48,107]],
+    #                              [[48,52,60],[46,51,122]]])
+    dataDirs =  [r'spineData/sub-verse621_L1_ALL_msk.nii.gz',
+                r'spineData/sub-verse621_L2_ALL_msk.nii.gz',
+                r'spineData/sub-verse621_L3_ALL_msk.nii.gz',
+                r'spineData/sub-verse621_L4_ALL_msk.nii.gz',
+                r'spineData/sub-verse621_L5_ALL_msk.nii.gz',]
     pedicle_points = np.asarray([[[35,47,65],[36,47,105]],
                                 [[36,48,62],[38,48,102]],
-                                 [[38,47,62],[39,47,104]],
-                                 [[43,48,60],[44,48,107]],
-                                 [[48,52,60],[46,51,122]]])
+                                [[38,47,62],[39,47,104]],
+                                [[43,48,60],[44,48,107]],
+                                [[48,52,60],[46,51,122]],
+                                 ])
     index = 0
+    buf = PPOBuffer(obs_dim, act_dim, local_steps_per_epoch, gamma, lam)
     for dataDir, pedicle_point in zip(dataDirs, pedicle_points):
         index += 1
         dataDir = os.path.join(os.getcwd(), dataDir)
@@ -182,20 +173,31 @@ def evluateothers(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=di
             ac.load_state_dict(ckpt)
         ac.to(device)
         
-        _, o = envs.reset(random_reset = False)
-        o = torch.Tensor(o).to(device)
+        _, o_3D = envs.reset(random_reset = False)
+        # o_3D = torch.Tensor(o_3D).to(device)
         step = 0
         fig = plt.figure()
         rewards = 0
-        while step<100:
+        while step<50:
             step += 1
             # ALGO LOGIC: action logic
             with torch.no_grad():
+                reward_dis_vec, L_hori_grad_vec, R_hori_grad_vec = np.zeros(args.LTO_length, dtype=np.float32), np.zeros(args.LTO_length, dtype=np.float32), np.zeros(args.LTO_length, dtype=np.float32)
+                L_vert_grad_vec, R_vert_grad_vec = np.zeros(args.LTO_length, dtype=np.float32), np.zeros(args.LTO_length, dtype=np.float32)
+                ret_buf, L_grad, R_grad = buf.ret_buf.copy(), buf.L_grad.copy(), buf.R_grad.copy()
+                LTO_indice = max(buf.ptr - args.LTO_length, 0)
+                reward_dis_vec[:buf.ptr - LTO_indice] = -1*ret_buf[LTO_indice:buf.ptr] + ret_buf[buf.ptr]
+                L_hori_grad_vec[:buf.ptr - LTO_indice] = L_grad[:,0][LTO_indice:buf.ptr]
+                L_vert_grad_vec[:buf.ptr - LTO_indice] = L_grad[:,1][LTO_indice:buf.ptr]
+                R_hori_grad_vec[:buf.ptr - LTO_indice] = R_grad[:,0][LTO_indice:buf.ptr]
+                R_vert_grad_vec[:buf.ptr - LTO_indice] = R_grad[:,1][LTO_indice:buf.ptr]
+                o = np.concatenate((reward_dis_vec, L_hori_grad_vec, L_vert_grad_vec, R_hori_grad_vec, R_vert_grad_vec))
+                o = torch.Tensor(o).to(device)
                 action_left, action_right = ac.act(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
             # TRY NOT TO MODIFY: execute the game and log data.
-            _, reward, done, others, o = envs.step(action_left.squeeze_(0).cpu().numpy() if len(action_left.shape) == 2 else action_left, \
+            _, reward, done, others, o_3D = envs.step(action_left.squeeze_(0).cpu().numpy() if len(action_left.shape) == 2 else action_left, \
                                                 action_right.squeeze_(0).cpu().numpy() if len(action_right.shape) == 2 else action_right)
-            o, next_done = torch.Tensor(o).to(device), torch.Tensor([1.] if done else [0.]).to(device)
+            # o_3D, next_done = torch.Tensor(o_3D).to(device), torch.Tensor([1.] if done else [0.]).to(device)
             rewards = rewards + reward
 
             info = {'reward': rewards, 'r': reward, 'len_delta_L': others['len_delta_L'], 'radiu_delta_L': others['radius_delta_L'],
@@ -205,28 +207,42 @@ def evluateothers(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=di
                 'action_right':'{:.3f}, {:.3f}'.format(action_right[0], action_right[1])}
 
             fig = envs.render_(fig, info, is_vis=False, is_save_gif=True, img_save_path=args.imgs_dir)
-            if index == 5 and 3.14*envs.state_matrix[2]*envs.state_matrix[0]*envs.state_matrix[0] > 4600:
-                break
+            # if index == 5 and 3.14*envs.state_matrix[2]*envs.state_matrix[0]*envs.state_matrix[0] > 4600:
+            #     break
         state3D_itk = sitk.GetImageFromArray(np.transpose(envs.state3D_array, (2, 1, 0)))
         sitk.WriteImage(state3D_itk, os.path.join(args.imgs_dir ,os.path.basename(dataDir)))
         images_to_video(args.imgs_dir, '*.jpg', isDelete=True, savename = os.path.basename(dataDir))
 
 def evaluate(args, envs, agent, epoch):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    _, o = envs.reset(random_reset = False)
-    o = torch.Tensor(o).to(device)
+    # _, o = envs.reset(random_reset = False)
+    # o = torch.Tensor(o).to(device)
     step = 0
     fig = plt.figure()
     rewards = 0
-    while step<100:
+    obs_dim = 125 if args.Leaning_to_Optimize else envs[0].state_shape
+    act_dim = (2,)
+    buf = PPOBuffer(obs_dim, act_dim, args.steps, gamma=0.99, lam=0.97)
+    while step<50:
         step += 1
         # ALGO LOGIC: action logic
         with torch.no_grad():
+            reward_dis_vec, L_hori_grad_vec, R_hori_grad_vec = np.zeros(args.LTO_length, dtype=np.float32), np.zeros(args.LTO_length, dtype=np.float32), np.zeros(args.LTO_length, dtype=np.float32)
+            L_vert_grad_vec, R_vert_grad_vec = np.zeros(args.LTO_length, dtype=np.float32), np.zeros(args.LTO_length, dtype=np.float32)
+            ret_buf, L_grad, R_grad = buf.ret_buf.copy(), buf.L_grad.copy(), buf.R_grad.copy()
+            LTO_indice = max(buf.ptr - args.LTO_length, 0)
+            reward_dis_vec[:buf.ptr - LTO_indice] = -1*ret_buf[LTO_indice:buf.ptr] + ret_buf[buf.ptr]
+            L_hori_grad_vec[:buf.ptr - LTO_indice] = L_grad[:,0][LTO_indice:buf.ptr]
+            L_vert_grad_vec[:buf.ptr - LTO_indice] = L_grad[:,1][LTO_indice:buf.ptr]
+            R_hori_grad_vec[:buf.ptr - LTO_indice] = R_grad[:,0][LTO_indice:buf.ptr]
+            R_vert_grad_vec[:buf.ptr - LTO_indice] = R_grad[:,1][LTO_indice:buf.ptr]
+            o = np.concatenate((reward_dis_vec, L_hori_grad_vec, L_vert_grad_vec, R_hori_grad_vec, R_vert_grad_vec))
+            o = torch.Tensor(o).to(device)
             action_left, action_right = agent.act(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
         # TRY NOT TO MODIFY: execute the game and log data.
-        _, reward, done, others, o = envs.step(action_left.squeeze_(0).cpu().numpy() if len(action_left.shape) == 2 else action_left, \
+        _, reward, done, others, o_3D = envs.step(action_left.squeeze_(0).cpu().numpy() if len(action_left.shape) == 2 else action_left, \
                                                 action_right.squeeze_(0).cpu().numpy() if len(action_right.shape) == 2 else action_right)
-        o, next_done = torch.Tensor(o).to(device), torch.Tensor([1.] if done else [0.]).to(device)
+        # o_3D, next_done = torch.Tensor(o_3D).to(device), torch.Tensor([1.] if done else [0.]).to(device)
         rewards = rewards + reward
 
         info = {'reward': rewards, 'r': reward, 'len_delta_L': others['len_delta_L'], 'radiu_delta_L': others['radius_delta_L'],
@@ -318,7 +334,7 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
             still profiting (improving the objective function)? The new policy 
             can still go farther than the clip_ratio says, but it doesn't help
             on the objective anymore. (Usually small, 0.1 to 0.3.) Typically
-            denoted by :math:`\epsilon`. 
+            denoted by :math:`\\epsilon`. 
 
         pi_lr (float): Learning rate for policy optimizer.
 
@@ -442,7 +458,7 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
         env = build_Env(spine_data, cfg['deg_threshold'], cfg)  # 只修改了初始化函数，其他函数待修改
         envs.append(env)
     # env = build_Env(spine_data, cfg['deg_threshold'], cfg)  # 只修改了初始化函数，其他函数待修改
-    obs_dim = envs[0].state_shape
+    obs_dim = 125 if args.Leaning_to_Optimize else envs[0].state_shape
     act_dim = (envs[0].action_num,)
 
     # Create actor-critic module
@@ -537,13 +553,58 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
         #              DeltaLossV=(loss_v.item() - v_l_old))
         return pi_l_old, v_l_old, kl, ent, cf, 
 
+    def caculate_gradient(L_degree, R_degree, h = 0.01):
+        manager = Manager()
+        return_dict = manager.dict()
+        radian_L, radian_R = np.deg2rad(L_degree), np.deg2rad(R_degree)
+        L_grad, R_grad = np.zeros(2, dtype=np.float32), np.zeros(2, dtype=np.float32)
+        def process_L(grad, radian_L, radian_R, index, indice, return_dict):
+            f0 = env.simulate_reward(caculate_around(radian_L, index, -2*h), radian_R)
+            f1 = env.simulate_reward(caculate_around(radian_L, index, -1*h), radian_R)
+            f3 = env.simulate_reward(caculate_around(radian_L, index, 1*h), radian_R)
+            f4 = env.simulate_reward(caculate_around(radian_L, index, 2*h), radian_R)
+            result = (f0-8*f1+8*f3-f4)/(12*h)
+            return_dict[indice] = result
+        def process_R(grad, radian_L, radian_R, index, indice, return_dict):
+            f0 = env.simulate_reward(radian_L, caculate_around(radian_R, index, -2*h))
+            f1 = env.simulate_reward(radian_L, caculate_around(radian_R, index, -1*h))
+            f3 = env.simulate_reward(radian_L, caculate_around(radian_R, index, 1*h))
+            f4 = env.simulate_reward(radian_L, caculate_around(radian_R, index, 2*h))
+            result = (f0-8*f1+8*f3-f4)/(12*h)
+            return_dict[indice] = result
+        def caculate_around(vec, index, delta):
+            vec_new = vec.copy()
+            vec_new[index] += (delta)
+            return vec_new
+        # for i in range(len(radian_L)):
+        #     f0 = env.simulate_reward(caculate_around(radian_L, i, -2*h), radian_R)
+        #     f1 = env.simulate_reward(caculate_around(radian_L, i, -1*h), radian_R)
+        #     f3 = env.simulate_reward(caculate_around(radian_L, i, 1*h), radian_R)
+        #     f4 = env.simulate_reward(caculate_around(radian_L, i, 2*h), radian_R)
+        #     L_grad[i] = (f0-8*f1+8*f3-f4)/(12*h)
+        # for i in range(len(radian_R)):
+        #     f0 = env.simulate_reward(radian_L, caculate_around(radian_R, i, -2*h))
+        #     f1 = env.simulate_reward(radian_L, caculate_around(radian_R, i, -1*h))
+        #     f3 = env.simulate_reward(radian_L, caculate_around(radian_R, i, 1*h))
+        #     f4 = env.simulate_reward(radian_L, caculate_around(radian_R, i, 2*h))
+        #     R_grad[i] = (f0-8*f1+8*f3-f4)/(12*h)
+        p1 = multiprocessing.Process(target=process_L, args=(L_grad, radian_L, radian_R, 0, 0, return_dict))
+        p2 = multiprocessing.Process(target=process_L, args=(L_grad, radian_L, radian_R, 1, 1, return_dict))
+        p3 = multiprocessing.Process(target=process_R, args=(R_grad, radian_L, radian_R, 0, 2, return_dict))
+        p4 = multiprocessing.Process(target=process_R, args=(R_grad, radian_L, radian_R, 1, 3, return_dict))
+        p1.start();p2.start();p3.start();p4.start()
+        p1.join();p2.join();p3.join();p4.join()
+        L_grad[0] = return_dict[0];L_grad[1] = return_dict[1]
+        R_grad[0] = return_dict[2];R_grad[1] = return_dict[3]
+        return L_grad, R_grad
     # Prepare for interaction with environment
     start_time = time.time()
     env_index = 0
     env = envs[env_index]
-    _, o = env.reset(random_reset = False)
+    _, o_3D = env.reset(random_reset = False)
     ep_ret, ep_len = 0, 0 
-    o = torch.Tensor(o).to(device)
+    # o = torch.Tensor(o_3D).to(device)
+    
 
     # Main loop: collect experience in env and update/log each epoch
     global_step = 0
@@ -553,21 +614,34 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
         pi_optimizer.param_groups[0]["lr"] = lrnow
         vf_optimizer.param_groups[0]["lr"] = lrnow
         for t in range(local_steps_per_epoch):
+            reward_dis_vec, L_hori_grad_vec, R_hori_grad_vec = np.zeros(args.LTO_length, dtype=np.float32), np.zeros(args.LTO_length, dtype=np.float32), np.zeros(args.LTO_length, dtype=np.float32)
+            L_vert_grad_vec, R_vert_grad_vec = np.zeros(args.LTO_length, dtype=np.float32), np.zeros(args.LTO_length, dtype=np.float32)
+            ret_buf, L_grad, R_grad = buf.ret_buf.copy(), buf.L_grad.copy(), buf.R_grad.copy()
+            
+            LTO_indice = max(buf.ptr - args.LTO_length, 0)
+            reward_dis_vec[:buf.ptr - LTO_indice] = -1*ret_buf[LTO_indice:buf.ptr] + ret_buf[buf.ptr]
+            L_hori_grad_vec[:buf.ptr - LTO_indice] = L_grad[:,0][LTO_indice:buf.ptr]
+            L_vert_grad_vec[:buf.ptr - LTO_indice] = L_grad[:,1][LTO_indice:buf.ptr]
+            R_hori_grad_vec[:buf.ptr - LTO_indice] = R_grad[:,0][LTO_indice:buf.ptr]
+            R_vert_grad_vec[:buf.ptr - LTO_indice] = R_grad[:,1][LTO_indice:buf.ptr]
+            o = np.concatenate((reward_dis_vec, L_hori_grad_vec, L_vert_grad_vec, R_hori_grad_vec, R_vert_grad_vec))
+            o = torch.Tensor(o).to(device)
             a_Left, a_Right, v, logp_a_Left, logp_a_Right = ac.step(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
 
-            # next_o, r, d, _ = env.step(a)
-            _, r, d, info, next_o = env.step(a_Left, a_Right)
+
+            state_, r, d, info, next_o_3d = env.step(a_Left, a_Right)
             ep_ret += r
             ep_len += 1
-
+            this_degree_L, this_degree_R = state_[4:6], state_[6:]
+            L_grad, R_grad = caculate_gradient(this_degree_L, this_degree_R)
             # save and log
-            o = o.squeeze(0).squeeze(0).cpu().numpy() if len(o.shape) == 5 else o
-            buf.store(o, a_Left, a_Right, r, v, logp_a_Left, logp_a_Right)
+            o = o.squeeze(0).squeeze(0).cpu().numpy() if len(o.shape) == 5 else o.cpu().numpy()
+            buf.store(o, a_Left, a_Right, r, v, logp_a_Left, logp_a_Right, L_grad, R_grad)
             # logger.store(VVals=v)
             
-            # Update obs (critical!)
-            o = next_o
-            o = torch.Tensor(o).to(device)
+            # # Update obs (critical!)
+            # o_3D = next_o_3d
+            # o_3D = torch.Tensor(o_3D).to(device)
 
             #timeout = ep_len == max_ep_len
             terminal = False #d or timeout
@@ -582,6 +656,17 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
                     print('Warning: trajectory cut off by epoch at %d steps.'%ep_len, flush=True)
                 # if trajectory didn't reach terminal state, bootstrap value target
                 if epoch_ended: #or timeout:
+                    reward_dis_vec, L_hori_grad_vec, R_hori_grad_vec = np.zeros(args.LTO_length, dtype=np.float32), np.zeros(args.LTO_length, dtype=np.float32), np.zeros(args.LTO_length, dtype=np.float32)
+                    L_vert_grad_vec, R_vert_grad_vec = np.zeros(args.LTO_length, dtype=np.float32), np.zeros(args.LTO_length, dtype=np.float32)
+                    ret_buf, L_grad, R_grad = buf.ret_buf.copy(), buf.L_grad.copy(), buf.R_grad.copy()
+                    LTO_indice = max(buf.ptr - args.LTO_length, 0)
+                    reward_dis_vec[:buf.ptr - LTO_indice] = -1*ret_buf[LTO_indice:buf.ptr] + ret_buf[min(buf.ptr, len(ret_buf)-1)]
+                    L_hori_grad_vec[:buf.ptr - LTO_indice] = L_grad[:,0][LTO_indice:buf.ptr]
+                    L_vert_grad_vec[:buf.ptr - LTO_indice] = L_grad[:,1][LTO_indice:buf.ptr]
+                    R_hori_grad_vec[:buf.ptr - LTO_indice] = R_grad[:,0][LTO_indice:buf.ptr]
+                    R_vert_grad_vec[:buf.ptr - LTO_indice] = R_grad[:,1][LTO_indice:buf.ptr]
+                    o = np.concatenate((reward_dis_vec, L_hori_grad_vec, L_vert_grad_vec, R_hori_grad_vec, R_vert_grad_vec))
+                    o = torch.Tensor(o).to(device)
                     _, _, v, _, _ = ac.step(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
                 else:
                     v = 0
@@ -594,13 +679,12 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
                     _, _= env.reset(random_reset = False) # 每回合结束时把所所有环境reset
                 # env_index = (epoch)%len(envs)
                 # env = envs[env_index]
-                if epoch%10 == 0:
+                if epoch%50 == 0:
                     env_index += 1
                 env = envs[env_index%len(envs)]
-                _, o = env.reset(random_reset = False)
+                _, o_3D = env.reset(random_reset = False)
                 ep_ret, ep_len = 0, 0 
-                o = torch.Tensor(o).to(device)
-
+                # o_3D = torch.Tensor(o_3D).to(device)
 
         # # Save model
         # if (epoch % save_freq == 0) or (epoch == epochs-1):
@@ -652,14 +736,16 @@ if __name__ == '__main__':
     parser.add_argument('--gamma', type=float, default=0.99)
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--cpu', type=int, default=4)
-    parser.add_argument('--steps', type=int, default=100)
-    parser.add_argument('--epochs', type=int, default=500)
+    parser.add_argument('--steps', type=int, default=50)
+    parser.add_argument('--epochs', type=int, default=1000)
     parser.add_argument('--save_freq', type=int, default=20)
     parser.add_argument('--exp_name', type=str, default='ppo')
-    parser.add_argument('--imgs_dir', type=str, default='./spinningup/spinningup_20imgs_volume')
-    parser.add_argument('--snapshot_dir', type=str, default='./spinningup/spinningup_20snapshot_volume')
+    parser.add_argument('--imgs_dir', type=str, default='./spinningup/spinningup_20imgs_volume_2d')
+    parser.add_argument('--snapshot_dir', type=str, default='./spinningup/spinningup_20snapshot_volume_2d')
     parser.add_argument('--KL', type=str, default='No KL')
     parser.add_argument('--clip', type=str, default='clip in env')
+    parser.add_argument('--Leaning_to_Optimize', type=bool, default=True)
+    parser.add_argument('--LTO_length', type=int, default=25)
     args = parser.parse_args()
 
     # mpi_fork(args.cpu)  # run parallel code with mpi
