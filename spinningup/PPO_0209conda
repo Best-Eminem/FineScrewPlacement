@@ -1,0 +1,16 @@
+nohup: 忽略输入
+2023-02-12 13:55:58.999903: I tensorflow/core/platform/cpu_feature_guard.cc:193] This TensorFlow binary is optimized with oneAPI Deep Neural Network Library (oneDNN) to use the following CPU instructions in performance-critical operations:  AVX2 FMA
+To enable them in other operations, rebuild TensorFlow with the appropriate compiler flags.
+2023-02-12 13:55:59.161410: E tensorflow/stream_executor/cuda/cuda_blas.cc:2981] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+2023-02-12 13:55:59.647906: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libnvinfer.so.7'; dlerror: libnvinfer.so.7: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /etc/anaconda3/envs/cyk-py38/lib/python3.8/site-packages/cv2/../../lib64:/home/gpu/.mujoco/mujoco200/bin::/usr/local/cuda/lib64
+2023-02-12 13:55:59.648021: W tensorflow/stream_executor/platform/default/dso_loader.cc:64] Could not load dynamic library 'libnvinfer_plugin.so.7'; dlerror: libnvinfer_plugin.so.7: cannot open shared object file: No such file or directory; LD_LIBRARY_PATH: /etc/anaconda3/envs/cyk-py38/lib/python3.8/site-packages/cv2/../../lib64:/home/gpu/.mujoco/mujoco200/bin::/usr/local/cuda/lib64
+2023-02-12 13:55:59.648030: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Cannot dlopen some TensorRT libraries. If you would like to use Nvidia GPU with TensorRT, please make sure the missing libraries mentioned above are installed properly.
+usage: PPO_single.py [-h] [--env ENV] [--hid HID] [--l L] [--gamma GAMMA]
+                     [--seed SEED] [--cpu CPU] [--steps STEPS]
+                     [--epochs EPOCHS] [--save_freq SAVE_FREQ]
+                     [--exp_name EXP_NAME] [--imgs_dir IMGS_DIR]
+                     [--snapshot_dir SNAPSHOT_DIR] [--KL KL] [--clip CLIP]
+                     [--Leaning_to_Optimize LEANING_TO_OPTIMIZE]
+                     [--discrete_action DISCRETE_ACTION]
+                     [--LTO_length LTO_LENGTH]
+PPO_single.py: error: unrecognized arguments: activate cyk-py38_2d_discrete.log

@@ -9,7 +9,7 @@ from gym import Env
 from tqdm import tqdm
 from copy import deepcopy
 from collections import namedtuple, deque
-from config import cfg
+from ddpg.config import cfg
 import torch
 import torch.optim as optim
 import numpy as np

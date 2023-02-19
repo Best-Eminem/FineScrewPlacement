@@ -22,6 +22,7 @@ class SpineEnv(gym.Env):
         self.step_opt = opts['step']
 
         self.state_shape = self.reset_opt['state_shape']
+        self.discrete_action = self.step_opt['discrete_action']
         self.mask_array= spineData['mask_array']
         self.mask_coards = spineData['mask_coards']
         self.pedicle_points = spineData['pedicle_points']
@@ -117,7 +118,7 @@ class SpineEnv(gym.Env):
 
     def stepPhysics(self, state_matrix, delta_degree_L, delta_degree_R, delta_cpoint = None):
         # todo 如果选择弧度值，这里需要改变
-        radius_L, radius_R, length_L, length_R, degree_L, degree_R = state_matrix[0], state_matrix[1], state_matrix[2], state_matrix[3], state_matrix[4], state_matrix[5]
+        radius_L, radius_R, length_L, length_R, degree_L, degree_R = state_matrix[0], state_matrix[1], state_matrix[2], state_matrix[3], state_matrix[4:6], state_matrix[6:8]
         result = {'d_L': degree_L + delta_degree_L,
                   'd_R': degree_R + delta_degree_R,
                 #   'p': [degree, cpoint + delta_cpoint],
@@ -147,10 +148,16 @@ class SpineEnv(gym.Env):
         #     "%r (%s) invalid" % (action, type(action))
         # ------------------------------------------
         #Cast action to float to strip np trappings
-        action_L = np.clip(action_L, -1.0, 1.0)
-        action_R = np.clip(action_R, -1.0, 1.0)
-        rotate_deg_L = self.rotate_mag * action_L[0:2]
-        rotate_deg_R = self.rotate_mag * action_R[0:2]
+        if self.discrete_action:
+            discrete_vec = np.array([-0.25,-0.2,-0.15,-0.1,-0.05,.0,0.05,0.1,0.15,0.2,0.25])
+            discrete_vec = np.rad2deg(discrete_vec)
+            rotate_deg_L = discrete_vec[action_L]
+            rotate_deg_R = discrete_vec[action_R]
+        else:
+            action_L = np.clip(action_L, -1.0, 1.0)
+            action_R = np.clip(action_R, -1.0, 1.0)
+            rotate_deg_L = self.rotate_mag * action_L[0:2]
+            rotate_deg_R = self.rotate_mag * action_R[0:2]
         # move_cp = self.trans_mag * action[2:]
         # step forward
         this_degree_L, this_degree_R = self.stepPhysics(self.state_matrix, rotate_deg_L,rotate_deg_R, delta_cpoint = None)
@@ -221,13 +228,17 @@ class SpineEnv(gym.Env):
 
         # --------------------------------------------------------------------------------------
         # Compute reward method2
+        pre_volume = (3.14*(self.pre_line_len_L*self.pre_max_radius_L*self.pre_max_radius_L)+3.14*(self.pre_line_len_R*self.pre_max_radius_R*self.pre_max_radius_R))/2
         len_delta_L, len_delta_R, radius_delta_L, radius_delta_R = self.getReward(self.state_matrix)
         # reward为当前螺钉长度减去一个base值
         # reward = (self.state_matrix[2] + self.state_matrix[3])/ (70*2) 
-        reward = (3.14*(self.state_matrix[2]*self.state_matrix[0]*self.state_matrix[0])+3.14*(self.state_matrix[3]*self.state_matrix[1]*self.state_matrix[1])) / (7000.0*2) #reward为体积
+        now_volume = (3.14*(self.state_matrix[2]*self.state_matrix[0]*self.state_matrix[0])+3.14*(self.state_matrix[3]*self.state_matrix[1]*self.state_matrix[1]))/2
+        reward = np.log(now_volume) - np.log(pre_volume) #reward为体积差
         state_ = self.state_matrix * 1.0
         return np.asarray(state_, dtype=np.float32), reward, done, \
-            {'len_delta_L': len_delta_L, 'len_delta_R': len_delta_R, 'radius_delta_L': radius_delta_L, 'radius_delta_R': radius_delta_R}, self.normalize(state_3D)
+            {'len_delta_L': len_delta_L, 'len_delta_R': len_delta_R, \
+             'radius_delta_L': radius_delta_L, 'radius_delta_R': radius_delta_R, \
+             'action_left':rotate_deg_L, 'action_right':rotate_deg_R}, self.normalize(state_3D)
 
     def render_(self, fig, info=None, is_vis=False, is_save_gif=False, img_save_path=None, **kwargs):
         # fig = plt.figure()
@@ -278,11 +289,12 @@ class SpineEnv(gym.Env):
             ax3.text(2, -120, '#action_L:' + '%s' % info['action_left'], color='red', fontsize=15)
             ax3.text(2, -150, '#action_R:' + '%s' % info['action_right'], color='red', fontsize=15)
             ax3.text(2, 110, '#frame:%.4d' % info['frame'], color='red', fontsize=20)
-            ax2.text(2, -45, '#radius:%.2f, %.2f' % (self.state_matrix[0],self.state_matrix[1]), color='red', fontsize=15)
-            ax2.text(2, -60, '#length:%.2f, %.2f' % (self.state_matrix[2],self.state_matrix[3]), color='red', fontsize=15)
-            ax2.text(2, -75, '#volume_L:%.1f' % (3.14*self.state_matrix[2]*self.state_matrix[0]*self.state_matrix[0]), color='red', fontsize=15)
-            ax2.text(2, -90, '#volume_R:%.1f' % (3.14*self.state_matrix[3]*self.state_matrix[1]*self.state_matrix[1]), color='red', fontsize=15)
-
+            ax2.text(2, -30, '#radius:%.2f, %.2f' % (self.state_matrix[0],self.state_matrix[1]), color='red', fontsize=15)
+            ax2.text(2, -45, '#length:%.2f, %.2f' % (self.state_matrix[2],self.state_matrix[3]), color='red', fontsize=15)
+            ax2.text(2, -60, '#volume_L:%.1f' % (3.14*self.state_matrix[2]*self.state_matrix[0]*self.state_matrix[0]), color='red', fontsize=15)
+            ax2.text(2, -75, '#volume_R:%.1f' % (3.14*self.state_matrix[3]*self.state_matrix[1]*self.state_matrix[1]), color='red', fontsize=15)
+            ax2.text(2, -85, '#angle_L:%.1f, %.1f' % (self.state_matrix[4], self.state_matrix[5]), color='red', fontsize=15)
+            ax2.text(2, -95, '#angle_R:%.1f, %.1f' % (self.state_matrix[6], self.state_matrix[7]), color='red', fontsize=15)
         if is_save_gif:
             if info is not None:
                 fig.savefig(img_save_path + '/Epoch%d_%d.jpg' % (info['epoch'], info['frame']))
@@ -300,7 +312,7 @@ class SpineEnv(gym.Env):
         state_3D[endpoints_R['radiu_p']] = 2
         return np.array(state_3D, dtype=np.float32)
 
-    def simulate_reward(self, radian_L, radian_R):
+    def simulate_reward(self, radian_L, radian_R, base_state):
         this_degree_L, this_degree_R = np.rad2deg(radian_L), np.rad2deg(radian_R)
         this_dirpoint_L, this_dirpoint_R = utils3.coorLngLat2Space(this_degree_L, this_degree_R, R=1., default = True)
         dist_mat_point_L = utils3.spine2point(self.mask_coards, self.mask_array, self.centerPointL)
@@ -325,5 +337,8 @@ class SpineEnv(gym.Env):
         if max_radius_R < 0.: # todo 仍需要再思考
             line_len_R = 0.01
             state_matrix[3] = 0.01
-        reward = (3.14*(self.state_matrix[2]*self.state_matrix[0]*self.state_matrix[0])+3.14*(self.state_matrix[3]*self.state_matrix[1]*self.state_matrix[1])) / (7000.0*2) #reward为体积      
+        pre_max_radius_L, pre_max_radius_R, pre_line_len_L, pre_line_len_R, = base_state[0],base_state[1],base_state[2],base_state[3]
+        pre_volume = (3.14*(pre_line_len_L*pre_max_radius_L*pre_max_radius_L)+3.14*(pre_line_len_R*pre_max_radius_R*pre_max_radius_R))/2  
+        now_volume = (3.14*(state_matrix[2]*state_matrix[0]*state_matrix[0])+3.14*(state_matrix[3]*state_matrix[1]*state_matrix[1]))/2
+        reward = np.log(now_volume) - np.log(pre_volume) #reward为体积差
         return reward

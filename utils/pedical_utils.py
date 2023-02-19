@@ -13,7 +13,7 @@ def coorSpace2LngLat(ppoint, R=None):
         R = np.linalg.norm(ppoint)
     return np.arcsin(ppoint[2] / R), np.arctan(ppoint[1] / ppoint[0])
 
-def coorLngLat2Space(angles_L, angles_R, R=1., default = True):
+def coorLngLat2Space(angles_L, angles_R=None, R=1., default = True):
     """返回旋转后的方向向量
 
     Args:
@@ -31,15 +31,16 @@ def coorLngLat2Space(angles_L, angles_R, R=1., default = True):
         if x_L>=0:
             x_L = -x_L
             y_L = -y_L
-    
-    x_R = R * np.cos(np.deg2rad(angles_R[1])) * np.sin(np.deg2rad(angles_R[0]))
-    y_R = R * np.cos(np.deg2rad(angles_R[1])) * np.cos(np.deg2rad(angles_R[0]))
-    z_R = R * np.sin(np.deg2rad(angles_R[1]))
-    if default:
-        if x_R>=0:
-            x_R = -x_R
-            y_R = -y_R
-    return np.array([x_L, y_L, z_L]), np.array([x_R, y_R, z_R])
+    if angles_R != None:
+        x_R = R * np.cos(np.deg2rad(angles_R[1])) * np.sin(np.deg2rad(angles_R[0]))
+        y_R = R * np.cos(np.deg2rad(angles_R[1])) * np.cos(np.deg2rad(angles_R[0]))
+        z_R = R * np.sin(np.deg2rad(angles_R[1]))
+        if default:
+            if x_R>=0:
+                x_R = -x_R
+                y_R = -y_R
+        return np.array([x_L, y_L, z_L]), np.array([x_R, y_R, z_R])
+    else: return np.array([x_L, y_L, z_L])
 
 def distEuclid(point1, point2):
     # 计算两点距离
@@ -86,8 +87,6 @@ def getEndpoint(spine_xyz, spine, cpoint, dirvector, R=0.8, line_thres=None, poi
         - threshold:[ymin,ymax]
         - dist:
     '''
-    if point_dist is None: point_dist = spine2point(spine_xyz, spine, cpoint)
-    if line_dist is None: line_dist = spine2line(spine_xyz, spine, cpoint, dirvector)
     dist_ = spine + np.where(line_dist>R, 0, 2)
     if line_thres is not None:
         # Todo 如果后面需要排除尾部
@@ -106,29 +105,52 @@ def getEndpoint(spine_xyz, spine, cpoint, dirvector, R=0.8, line_thres=None, poi
         online_points[2] = online_points[2][:index+1]
     # if len(online_points[0]) == 0:
     #     print('cpoint:%d %d %d'% (cpoint[0], cpoint[1],cpoint[2]))
-    minxv, minxv_ind = np.min(online_points[0]), np.where(online_points[0] == np.min(online_points[0]))
-    maxxv, maxxv_ind = np.max(online_points[0]), np.where(online_points[0] == np.max(online_points[0]))
-    minyvs = online_points[1][minxv_ind]
-    minzvs = online_points[2][minxv_ind]
-    maxyvs = online_points[1][maxxv_ind]
-    maxzvs = online_points[2][maxxv_ind]
-    if np.min(minyvs)<=np.max(maxyvs):
-        minyv = np.min(minyvs)
-        maxyv = np.max(maxyvs)
-    else:
-        minyv = np.max(minyvs)
-        maxyv = np.min(maxyvs)
+    x_axis_dis = np.max(online_points[0]) - np.min(online_points[0])
+    y_axis_dis = np.max(online_points[1]) - np.min(online_points[1])
+    # x_axis_dis = np.max(online_points[0]) - np.min(online_points[0])
+    if x_axis_dis > y_axis_dis:
+        minxv, minxv_ind = np.min(online_points[0]), np.where(online_points[0] == np.min(online_points[0]))
+        maxxv, maxxv_ind = np.max(online_points[0]), np.where(online_points[0] == np.max(online_points[0]))
+        minyvs = online_points[1][minxv_ind]
+        minzvs = online_points[2][minxv_ind]
+        maxyvs = online_points[1][maxxv_ind]
+        maxzvs = online_points[2][maxxv_ind]
+        if np.min(minyvs)<np.max(maxyvs):
+            minyv = np.min(minyvs)
+            maxyv = np.max(maxyvs)
+        else:
+            minyv = np.max(minyvs)
+            maxyv = np.min(maxyvs)
 
-    if np.min(minzvs)<=np.max(maxzvs):
-        minzv = np.min(minzvs)
-        maxzv = np.max(maxzvs)
+        if np.min(minzvs)<np.max(maxzvs):
+            minzv = np.min(minzvs)
+            maxzv = np.max(maxzvs)
+        else:
+            minzv = np.max(minzvs)
+            maxzv = np.min(maxzvs)
     else:
-        minzv = np.max(minzvs)
-        maxzv = np.min(maxzvs)
-    # start_point = np.array([maxxv,maxyv,maxzv])
-    # end_point = np.array([minxv,minyv,minzv])
+        minyv, minyv_ind = np.min(online_points[1]), np.where(online_points[1] == np.min(online_points[1]))
+        maxyv, maxyv_ind = np.max(online_points[1]), np.where(online_points[1] == np.max(online_points[1]))
+        minxvs = online_points[0][minyv_ind]
+        minzvs = online_points[2][minyv_ind]
+        maxxvs = online_points[0][maxyv_ind]
+        maxzvs = online_points[2][maxyv_ind]
+        if np.min(minxvs)<np.max(maxxvs):
+            minxv = np.min(minxvs)
+            maxxv = np.max(maxxvs)
+        else:
+            minxv = np.max(minxvs)
+            maxxv = np.min(maxxvs)
+        if np.min(minzvs)<np.max(maxzvs):
+            minzv = np.min(minzvs)
+            maxzv = np.max(maxzvs)
+        else:
+            minzv = np.max(minzvs)
+            maxzv = np.min(maxzvs)
     start_point = np.array([minxv, minyv, minzv])
     end_point = np.array([maxxv, maxyv, maxzv])
+    if distEuclid(start_point, end_point) <= 10:
+        print('error')
     return start_point, end_point
 
 

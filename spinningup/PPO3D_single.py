@@ -30,17 +30,15 @@ class PPOBuffer:
     def __init__(self, obs_dim, act_dim, size, gamma=0.99, lam=0.95):
         self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
         self.act_L_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
-        self.L_grad = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
         self.adv_buf = np.zeros(size, dtype=np.float32)
         self.rew_buf = np.zeros(size, dtype=np.float32)
         self.ret_buf = np.zeros(size, dtype=np.float32)
         self.val_buf = np.zeros(size, dtype=np.float32)
-        self.delta_volume_buf = np.zeros(size, dtype=np.float32)
         self.logp_a_Left_buf = np.zeros(size, dtype=np.float32)
         self.gamma, self.lam = gamma, lam
         self.ptr, self.path_start_idx, self.max_size = 0, 0, size
 
-    def store(self, obs, act_L, rew, val, logp_a_Left, L_grad, delta_volume):
+    def store(self, obs, act_L, rew, val, logp_a_Left):
         """
         Append one timestep of agent-environment interaction to the buffer.
         """
@@ -49,9 +47,7 @@ class PPOBuffer:
         self.act_L_buf[self.ptr] = act_L
         self.rew_buf[self.ptr] = rew
         self.val_buf[self.ptr] = val
-        self.delta_volume_buf[self.ptr] = delta_volume
         self.logp_a_Left_buf[self.ptr] = logp_a_Left
-        self.L_grad[self.ptr] = L_grad
         self.ptr += 1
 
     def finish_path(self, last_val=0):
@@ -82,8 +78,7 @@ class PPOBuffer:
         adv_mean, adv_std = np.mean(self.adv_buf), np.std(self.adv_buf)
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
         data = dict(obs=self.obs_buf, act_L=self.act_L_buf, ret=self.ret_buf,
-                    adv=self.adv_buf, logp_L=self.logp_a_Left_buf, delta_volume=self.delta_volume_buf,
-                    L_grad=self.L_grad)
+                    adv=self.adv_buf, logp_L=self.logp_a_Left_buf)
         return {k: torch.as_tensor(v, dtype=torch.float32) for k,v in data.items()}
 
 def build_data_load(dataDir, pedicle_points, pedicle_points_in_zyx, input_z=64, input_y=80, input_x=160):
@@ -203,7 +198,7 @@ def evluateothers(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=di
 
 def evaluate(args, env, agent, epoch):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # _, o = env.reset(random_reset = False)
+    _, o = env.reset(random_reset = False)
     # o = torch.Tensor(o).to(device)
     step = 0
     fig = plt.figure()
@@ -215,31 +210,16 @@ def evaluate(args, env, agent, epoch):
         step += 1
         # ALGO LOGIC: action logic
         with torch.no_grad():
-            reward_dis_vec, L_hori_grad_vec = np.zeros(args.LTO_length, dtype=np.float32), np.zeros((args.LTO_length, 2), dtype=np.float32)
-            L_vert_grad_vec = np.zeros((args.LTO_length, 2), dtype=np.float32)
-            rew_buf, L_grad, delta_volume_buf = buf.rew_buf.copy(), buf.L_grad.copy(), buf.delta_volume_buf.copy()
-            LTO_indice = max(buf.ptr - args.LTO_length, 0)
-            reward_dis_vec[args.LTO_length-(buf.ptr-LTO_indice):] = delta_volume_buf[LTO_indice:buf.ptr]
-            # reward_dis_vec[args.LTO_length-(buf.ptr-LTO_indice):] = rew_buf[LTO_indice:buf.ptr]
-            L_hori_grad_vec[args.LTO_length-(buf.ptr-LTO_indice):] = get_gradVec(L_grad[:,0][LTO_indice:buf.ptr])
-            L_vert_grad_vec[args.LTO_length-(buf.ptr-LTO_indice):] = get_gradVec(L_grad[:,1][LTO_indice:buf.ptr])
-            L_hori_grad_vec = L_hori_grad_vec.reshape(L_hori_grad_vec.size)
-            L_vert_grad_vec = L_vert_grad_vec.reshape(L_vert_grad_vec.size)
-            now_volume = np.array([(3.14*(env.pre_line_len_L*env.pre_max_radius_L*env.pre_max_radius_L))/100,])
-            o = np.concatenate((reward_dis_vec, L_hori_grad_vec, L_vert_grad_vec, now_volume))
             o = torch.Tensor(o).to(device)
             action_left, v, logp_a_Left = agent.step(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
 
         # TRY NOT TO MODIFY: execute the game and log data.
-        this_degree_L = env.state_matrix[2:]
         state_, reward, done, others, o_3D = env.step(action_left.squeeze_(0).cpu().numpy() if len(action_left.shape) == 2 else action_left)
         # if done:
         #     break
         action_left = others['action_left']
-        delta_volume = others['delta_volume']
-        L_grad = caculate_gradient(this_degree_L, env_=env, base_state=state_)
         o = o.squeeze(0).squeeze(0).cpu().numpy() if len(o.shape) == 5 else o.cpu().numpy()
-        buf.store(o, action_left, reward, v, logp_a_Left, L_grad, delta_volume)
+        buf.store(o, action_left, reward, v, logp_a_Left)
         # o_3D, next_done = torch.Tensor(o_3D).to(device), torch.Tensor([1.] if done else [0.]).to(device)
         rewards = rewards + reward
         info = {'reward': rewards, 'r': reward, 'len_delta_L': others['len_delta_L'], 'radiu_delta_L': others['radius_delta_L'],
@@ -507,7 +487,7 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
             L_vert_grad_vec[args.LTO_length-(buf.ptr-LTO_indice):] = get_gradVec(L_grad[:,1][LTO_indice:buf.ptr])
             L_hori_grad_vec = L_hori_grad_vec.reshape(L_hori_grad_vec.size)
             L_vert_grad_vec = L_vert_grad_vec.reshape(L_vert_grad_vec.size)
-            # now_volume = np.array([(3.14*(env.pre_line_len_L*env.pre_max_radius_L*env.pre_max_radius_L))/100,])
+            now_volume = np.array([(3.14*(env.pre_line_len_L*env.pre_max_radius_L*env.pre_max_radius_L))/100,])
             o = np.concatenate((reward_dis_vec, L_hori_grad_vec, L_vert_grad_vec, now_volume))
             o = torch.Tensor(o).to(device)
             a_Left, v, logp_a_Left = ac.step(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)

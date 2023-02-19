@@ -140,6 +140,7 @@ class Agent(nn.Module):
         probs = Categorical(logits=logits)
         if action is None:
             action = probs.sample()
+            logs = probs.log_prob(action)
         return action, probs.log_prob(action), probs.entropy(), self.critic(hidden)
 
 

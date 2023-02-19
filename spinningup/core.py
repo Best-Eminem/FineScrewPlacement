@@ -59,13 +59,18 @@ class Actor(nn.Module):
         # Produce action distributions for given observations, and 
         # optionally compute the log likelihood of given actions under
         # those distributions.      
-        pi_Left, pi_Right = self._distribution(obs)
+        # pi_Left, pi_Right = self._distribution(obs)
+        # logp_a_Left = None
+        # logp_a_Right = None
+        # if a_Left is not None and a_Right is not None:
+        #     logp_a_Left = self._log_prob_from_distribution(pi_Left, a_Left)
+        #     logp_a_Right = self._log_prob_from_distribution(pi_Right, a_Right)
+        # return pi_Left, pi_Right, logp_a_Left, logp_a_Right
+        pi_Left = self._distribution(obs)
         logp_a_Left = None
-        logp_a_Right = None
-        if a_Left is not None and a_Right is not None:
+        if a_Left is not None:
             logp_a_Left = self._log_prob_from_distribution(pi_Left, a_Left)
-            logp_a_Right = self._log_prob_from_distribution(pi_Right, a_Right)
-        return pi_Left, pi_Right, logp_a_Left, logp_a_Right
+        return pi_Left, logp_a_Left
 
 
 class MLPCategoricalActor(Actor):
@@ -127,29 +132,53 @@ class LTOMLPGaussianActor(Actor):
     def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
         super().__init__()
         log_std_left = -0.5 * torch.ones(act_dim)
-        log_std_right = -0.5 * torch.ones(act_dim)
+        # log_std_right = -0.5 * torch.ones(act_dim)
         self.log_std_left = torch.nn.Parameter(log_std_left)
-        self.log_std_right = torch.nn.Parameter(log_std_right)
+        # self.log_std_right = torch.nn.Parameter(log_std_right)
         self.linearNetLeft = nn.Sequential(
-            layer_init(nn.Linear(125, 125)),
+            layer_init(nn.Linear(obs_dim, obs_dim)),
             nn.Softplus(),
-            layer_init(nn.Linear(125, act_dim), std=0.01),
+            layer_init(nn.Linear(obs_dim, act_dim), std=0.01),
         )
-        self.linearNetRight = nn.Sequential(
-            layer_init(nn.Linear(125, 125)),
-            nn.Softplus(),
-            layer_init(nn.Linear(125, act_dim), std=0.01),
-        )
+        # self.linearNetRight = nn.Sequential(
+        #     layer_init(nn.Linear(obs_dim, obs_dim)),
+        #     nn.Softplus(),
+        #     layer_init(nn.Linear(obs_dim, act_dim), std=0.01),
+        # )
 
     def _distribution(self, obs):
         mu_left = self.linearNetLeft(obs)
-        mu_right = self.linearNetRight(obs)
+        # mu_right = self.linearNetRight(obs)
         std_left = torch.exp(self.log_std_left)
-        std_right = torch.exp(self.log_std_right)
-        return Normal(mu_left, std_left), Normal(mu_right, std_right)
+        # std_right = torch.exp(self.log_std_right)
+        return Normal(mu_left, std_left) #, Normal(mu_right, std_right)
 
     def _log_prob_from_distribution(self, pi, act):
         return pi.log_prob(act).sum(axis=-1)    # Last axis sum needed for Torch Normal distribution
+
+class LTOMLPCategoricalActor(Actor):
+    
+    def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
+        super().__init__()
+        self.logits_net_left = nn.Sequential(
+            layer_init(nn.Linear(obs_dim, obs_dim)),
+            nn.Softplus(),
+            layer_init(nn.Linear(obs_dim, act_dim*11), std=0.01),
+        )
+
+    def _distribution(self, obs):
+        self.logits_net_left.state_dict()['0.weight'][:,-1] = 0
+        # print(self.logits_net_left.state_dict())
+        logits_left = self.logits_net_left(obs)
+        logits_left = logits_left.reshape((-1, 11))
+        return Categorical(logits=logits_left)
+
+    def _log_prob_from_distribution(self, pi, act):
+        if len(act.shape) == 2:
+            shape = act.shape
+            act = act.reshape(-1)
+            return pi.log_prob(act).reshape(shape).sum(axis=-1)
+        return pi.log_prob(act).sum(axis=-1)
 
 class MLPCritic(nn.Module):
     def __init__(self, obs_dim, hidden_sizes, activation):
@@ -174,35 +203,46 @@ class LTOMLPCritic(nn.Module):
     def __init__(self, obs_dim, hidden_sizes, activation):
         super().__init__()
         self.v_net = nn.Sequential(
-            layer_init(nn.Linear(125, 125)),
+            layer_init(nn.Linear(obs_dim, obs_dim)),
             nn.Softplus(),
-            layer_init(nn.Linear(125, 1), std=1),
+            layer_init(nn.Linear(obs_dim, 1), std=1),
         )
 
     def forward(self, obs):
         return torch.squeeze(self.v_net(obs), -1) # Critical to ensure v has right shape.
 
 class MyMLPActorCritic(nn.Module):
-    def __init__(self, observation_shape, action_shape, hidden_sizes=(64,64), activation=nn.Tanh):
+    def __init__(self, observation_shape, action_shape, hidden_sizes=(64,64), activation=nn.Tanh, discrete=True):
         super().__init__()
         # policy builder depends on action space
         # if isinstance(action_space, Box):
-        self.pi = LTOMLPGaussianActor(observation_shape, action_shape[0], hidden_sizes, activation)
+        if discrete:
+            self.pi = LTOMLPCategoricalActor(observation_shape, action_shape, hidden_sizes, activation)
+        else: self.pi = LTOMLPGaussianActor(observation_shape, action_shape, hidden_sizes, activation)
         # build value function
         self.v  = LTOMLPCritic(observation_shape, hidden_sizes, activation)
     def step(self, obs):
+        # with torch.no_grad():
+        #     pi_Left, pi_Right = self.pi._distribution(obs)
+        #     a_Left = pi_Left.sample()
+        #     a_Right = pi_Right.sample()
+        #     # a = torch.clamp(a, min=-1.0, max=1.0)
+        #     logp_a_Left = self.pi._log_prob_from_distribution(pi_Left, a_Left)
+        #     logp_a_Right = self.pi._log_prob_from_distribution(pi_Right, a_Right)
+        #     v = self.v(obs)
+        # return a_Left.squeeze_(0).cpu().numpy() if len(a_Left.shape) == 2 else a_Left.cpu().numpy(), \
+        #         a_Right.squeeze_(0).cpu().numpy() if len(a_Right.shape) == 2 else a_Right.cpu().numpy(), \
+        #         v.cpu().numpy(), \
+        #         logp_a_Left.cpu().numpy(), logp_a_Right.cpu().numpy()
         with torch.no_grad():
-            pi_Left, pi_Right = self.pi._distribution(obs)
+            pi_Left = self.pi._distribution(obs)
             a_Left = pi_Left.sample()
-            a_Right = pi_Right.sample()
             # a = torch.clamp(a, min=-1.0, max=1.0)
             logp_a_Left = self.pi._log_prob_from_distribution(pi_Left, a_Left)
-            logp_a_Right = self.pi._log_prob_from_distribution(pi_Right, a_Right)
             v = self.v(obs)
         return a_Left.squeeze_(0).cpu().numpy() if len(a_Left.shape) == 2 else a_Left.cpu().numpy(), \
-                a_Right.squeeze_(0).cpu().numpy() if len(a_Right.shape) == 2 else a_Right.cpu().numpy(), \
                 v.cpu().numpy(), \
-                logp_a_Left.cpu().numpy(), logp_a_Right.cpu().numpy()
-
+                logp_a_Left.cpu().numpy()
     def act(self, obs):
-        return self.step(obs)[0], self.step(obs)[1]
+        # return self.step(obs)[0], self.step(obs)[1]
+        return self.step(obs)[0]

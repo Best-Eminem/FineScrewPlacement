@@ -10,3 +10,4 @@ runs/
 **/*.pth
 **/*.jpg
 **/*.nii.gz
+**/*.png
