@@ -132,13 +132,13 @@ class SpineEnv(gym.Env):
             discrete_vec = np.array([-0.25,-0.2,-0.15,-0.1,-0.05,.0,0.05,0.1,0.15,0.2,0.25])
             # discrete_vec = np.array([-0.1,-0.05,.0,0.05,0.1])
             discrete_vec = np.rad2deg(discrete_vec)
-            # rotate_deg_L = np.array([discrete_vec[action_L[0]], discrete_vec[action_L[1]]])
-            rotate_deg_L = np.array([.0, discrete_vec[action_L[1]]])
+            rotate_deg_L = np.array([discrete_vec[action_L[0]], discrete_vec[action_L[1]]])
+            # rotate_deg_L = np.array([.0, discrete_vec[action_L[1]]])
         else:
-            action_L = np.clip(action_L, -1.0, 1.0)
+            # action_L = np.clip(action_L, -1.0, 1.0)
             rotate_deg_L = self.rotate_mag * action_L[0:2]
         this_degree_L = self.stepPhysics(self.state_matrix, rotate_deg_L, delta_cpoint = None)
-        this_dirpoint_L = utils3.coorLngLat2Space(this_degree_L, angles_R=None, R=1., default = True)
+        this_dirpoint_L = utils3.coorLngLat2Space(this_degree_L, angles_R=None, R=1.)
         self.dist_mat_point_L = utils3.spine2point(self.mask_coards, self.mask_array, self.centerPointL)
         self.dist_mat_line_L = utils3.spine2line(self.mask_coards, self.mask_array, self.centerPointL, this_dirpoint_L)
         max_radius_L, line_len_L, self.endpoints_L = utils3.getLenRadiu \
@@ -169,8 +169,8 @@ class SpineEnv(gym.Env):
         now_volume = (3.14*(self.state_matrix[1]*self.state_matrix[0]*self.state_matrix[0]))
         # reward = np.log(now_volume) - np.log(pre_volume) #reward为体积差
         delta_volume = (now_volume - pre_volume)/100
-        # reward = now_volume/100.0 #reward为体积差
-        reward = self.state_matrix[1]/70.0
+        reward = now_volume/10000.0 #reward为体积差
+        # reward = self.state_matrix[1]/70.0
         state_ = self.state_matrix * 1.0
         return np.asarray(state_, dtype=np.float32), reward, done, \
             {'len_delta_L': len_delta_L, 'radius_delta_L': radius_delta_L, 'action_left':rotate_deg_L, 'delta_volume':delta_volume}, self.normalize(state_3D)

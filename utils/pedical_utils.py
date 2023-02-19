@@ -13,7 +13,7 @@ def coorSpace2LngLat(ppoint, R=None):
         R = np.linalg.norm(ppoint)
     return np.arcsin(ppoint[2] / R), np.arctan(ppoint[1] / ppoint[0])
 
-def coorLngLat2Space(angles_L, angles_R=None, R=1., default = True):
+def coorLngLat2Space(angles_L, angles_R=None, R=1., default = False):
     """返回旋转后的方向向量
 
     Args:

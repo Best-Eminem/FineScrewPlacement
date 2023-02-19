@@ -75,16 +75,43 @@ class Actor(nn.Module):
 
 class MLPCategoricalActor(Actor):
     
-    def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
+    def __init__(self, obs_dim, act_dim, hidden_sizes, activation, discrete_dim=11):
         super().__init__()
-        self.logits_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
+        self.conv_net = nn.Sequential(
+            layer_init(nn.Conv3d(1, 32, 8, stride=4)),
+            nn.ReLU(True),
+            layer_init(nn.Conv3d(32, 64, 4, stride=2)),
+            nn.ReLU(True),
+            layer_init(nn.Conv3d(64, 64, 3, stride=1)),
+            nn.ReLU(True),
+            nn.Flatten(),
+        )
+        self.linearNetLeft = nn.Sequential(
+            layer_init(nn.Linear(64 * 16 * 6 * 4, 512)),
+            nn.ReLU(True),
+            layer_init(nn.Linear(512, act_dim*discrete_dim), std=0.01),
+            # nn.Tanh(),
+        )
+        self.linearNetRight = nn.Sequential(
+            layer_init(nn.Linear(64 * 16 * 6 * 4, 512)),
+            nn.ReLU(True),
+            layer_init(nn.Linear(512, act_dim*discrete_dim), std=0.01),
+            # nn.Tanh(),
+        )
 
     def _distribution(self, obs):
-        logits = self.logits_net(obs)
-        return Categorical(logits=logits)
+        # _flatten = self.conv_net(obs / 2.0)
+        _flatten = self.conv_net(obs)
+        logits_left = self.linearNetLeft(_flatten)
+        logits_left = logits_left.reshape((-1, self.discrete_dim))
+        return Categorical(logits=logits_left)
 
     def _log_prob_from_distribution(self, pi, act):
-        return pi.log_prob(act)
+        if len(act.shape) == 2:
+            shape = act.shape
+            act = act.reshape(-1)
+            return pi.log_prob(act).reshape(shape).sum(axis=-1)
+        return pi.log_prob(act).sum(axis=-1)
 
 
 class MLPGaussianActor(Actor):
@@ -118,12 +145,13 @@ class MLPGaussianActor(Actor):
         )
 
     def _distribution(self, obs):
-        _flatten = self.conv_net(obs / 2.0)
+        # _flatten = self.conv_net(obs / 2.0)
+        _flatten = self.conv_net(obs)
         mu_left = self.linearNetLeft(_flatten)
-        mu_right = self.linearNetRight(_flatten)
+        # mu_right = self.linearNetRight(_flatten)
         std_left = torch.exp(self.log_std_left)
-        std_right = torch.exp(self.log_std_right)
-        return Normal(mu_left, std_left), Normal(mu_right, std_right)
+        # std_right = torch.exp(self.log_std_right)
+        return Normal(mu_left, std_left)#, Normal(mu_right, std_right)
 
     def _log_prob_from_distribution(self, pi, act):
         return pi.log_prob(act).sum(axis=-1)    # Last axis sum needed for Torch Normal distribution
@@ -158,19 +186,20 @@ class LTOMLPGaussianActor(Actor):
 
 class LTOMLPCategoricalActor(Actor):
     
-    def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
+    def __init__(self, obs_dim, act_dim, hidden_sizes, activation, discrete_dim=11):
         super().__init__()
+        self.discrete_dim = discrete_dim
         self.logits_net_left = nn.Sequential(
             layer_init(nn.Linear(obs_dim, obs_dim)),
             nn.Softplus(),
-            layer_init(nn.Linear(obs_dim, act_dim*11), std=0.01),
+            layer_init(nn.Linear(obs_dim, act_dim*discrete_dim), std=0.01),
         )
 
     def _distribution(self, obs):
         self.logits_net_left.state_dict()['0.weight'][:,-1] = 0
         # print(self.logits_net_left.state_dict())
         logits_left = self.logits_net_left(obs)
-        logits_left = logits_left.reshape((-1, 11))
+        logits_left = logits_left.reshape((-1, self.discrete_dim))
         return Categorical(logits=logits_left)
 
     def _log_prob_from_distribution(self, pi, act):
@@ -197,7 +226,8 @@ class MLPCritic(nn.Module):
         )
 
     def forward(self, obs):
-        return torch.squeeze(self.v_net(obs / 2.0), -1) # Critical to ensure v has right shape.
+        # return torch.squeeze(self.v_net(obs / 2.0), -1) # Critical to ensure v has right shape.
+        return torch.squeeze(self.v_net(obs), -1) # Critical to ensure v has right shape.
 
 class LTOMLPCritic(nn.Module):
     def __init__(self, obs_dim, hidden_sizes, activation):
@@ -212,15 +242,22 @@ class LTOMLPCritic(nn.Module):
         return torch.squeeze(self.v_net(obs), -1) # Critical to ensure v has right shape.
 
 class MyMLPActorCritic(nn.Module):
-    def __init__(self, observation_shape, action_shape, hidden_sizes=(64,64), activation=nn.Tanh, discrete=True):
+    def __init__(self, observation_shape, action_shape, hidden_sizes=(64,64), activation=nn.Tanh, discrete=True, LTO = True):
         super().__init__()
         # policy builder depends on action space
         # if isinstance(action_space, Box):
         if discrete:
-            self.pi = LTOMLPCategoricalActor(observation_shape, action_shape, hidden_sizes, activation)
-        else: self.pi = LTOMLPGaussianActor(observation_shape, action_shape, hidden_sizes, activation)
+            if LTO:
+                self.pi = LTOMLPCategoricalActor(observation_shape, action_shape, hidden_sizes, activation)
+            else: self.pi = MLPCategoricalActor(observation_shape, action_shape, hidden_sizes, activation)
+        else: 
+            if LTO:
+                self.pi = LTOMLPGaussianActor(observation_shape, action_shape, hidden_sizes, activation)
+            else: self.pi = MLPGaussianActor(observation_shape, action_shape, hidden_sizes, activation)
         # build value function
-        self.v  = LTOMLPCritic(observation_shape, hidden_sizes, activation)
+        if LTO:
+            self.v  = LTOMLPCritic(observation_shape, hidden_sizes, activation)
+        else: self.v  = MLPCritic(observation_shape, hidden_sizes, activation)
     def step(self, obs):
         # with torch.no_grad():
         #     pi_Left, pi_Right = self.pi._distribution(obs)

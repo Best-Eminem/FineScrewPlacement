@@ -107,7 +107,7 @@ def evluateothers(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=di
         os.makedirs(args.imgs_dir)
     if not os.path.exists(args.snapshot_dir):
         os.makedirs(args.snapshot_dir)
-    device = torch.device("cuda")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # dataDirs = [
     #               'spineData/sub-verse621_L1_ALL_msk.nii.gz',
@@ -171,16 +171,16 @@ def evluateothers(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=di
                 L_vert_grad_vec[args.LTO_length-(buf.ptr-LTO_indice):] = get_gradVec(L_grad[:,1][LTO_indice:buf.ptr])
                 L_hori_grad_vec = L_hori_grad_vec.reshape(L_hori_grad_vec.size)
                 L_vert_grad_vec = L_vert_grad_vec.reshape(L_vert_grad_vec.size)
-                o = np.concatenate((reward_dis_vec, L_hori_grad_vec, L_vert_grad_vec))
-                o = torch.Tensor(o).to(device)
-                action_left, v, logp_a_Left = ac.step(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
+                o_3D = np.concatenate((reward_dis_vec, L_hori_grad_vec, L_vert_grad_vec))
+                o_3D = torch.Tensor(o_3D).to(device)
+                action_left, v, logp_a_Left = ac.step(o_3D.unsqueeze_(0).unsqueeze_(0) if len(o_3D.shape) == 3 else o_3D)
             # TRY NOT TO MODIFY: execute the game and log data.
             state_, reward, done, others, o_3D = envs.step(action_left.squeeze_(0).cpu().numpy() if len(action_left.shape) == 2 else action_left)
             action_left = others['action_left']
             this_degree_L = state_[2:]
             L_grad = caculate_gradient(this_degree_L, env_=envs, base_state=state_)
-            o = o.squeeze(0).squeeze(0).cpu().numpy() if len(o.shape) == 5 else o.cpu().numpy()
-            buf.store(o, action_left, reward, v, logp_a_Left, L_grad)
+            o_3D = o_3D.squeeze(0).squeeze(0).cpu().numpy() if len(o_3D.shape) == 5 else o_3D.cpu().numpy()
+            buf.store(o_3D, action_left, reward, v, logp_a_Left, L_grad)
             # o_3D, next_done = torch.Tensor(o_3D).to(device), torch.Tensor([1.] if done else [0.]).to(device)
             rewards = rewards + reward
             action_left_clip = np.clip(action_left, -1.0, 1.0) * envs.rotate_mag
@@ -198,78 +198,35 @@ def evluateothers(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=di
 
 def evaluate(args, env, agent, epoch):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    _, o = env.reset(random_reset = False)
-    # o = torch.Tensor(o).to(device)
+    _, o_3D = env.reset(random_reset = False)
+    o_3D = torch.Tensor(o_3D).to(device)
     step = 0
     fig = plt.figure()
     rewards = 0
     obs_dim = env.state_shape
     act_dim = env.action_num
-    buf = PPOBuffer(obs_dim, act_dim, args.steps, gamma=0.99, lam=0.97)
     while step < args.steps:
         step += 1
         # ALGO LOGIC: action logic
         with torch.no_grad():
-            o = torch.Tensor(o).to(device)
-            action_left, v, logp_a_Left = agent.step(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
+            action_left, v, logp_a_Left = agent.step(o_3D.unsqueeze_(0).unsqueeze_(0) if len(o_3D.shape) == 3 else o_3D)
 
         # TRY NOT TO MODIFY: execute the game and log data.
         state_, reward, done, others, o_3D = env.step(action_left.squeeze_(0).cpu().numpy() if len(action_left.shape) == 2 else action_left)
-        # if done:
-        #     break
+        
         action_left = others['action_left']
-        o = o.squeeze(0).squeeze(0).cpu().numpy() if len(o.shape) == 5 else o.cpu().numpy()
-        buf.store(o, action_left, reward, v, logp_a_Left)
-        # o_3D, next_done = torch.Tensor(o_3D).to(device), torch.Tensor([1.] if done else [0.]).to(device)
+        o_3D, next_done = torch.Tensor(o_3D).to(device), torch.Tensor([1.] if done else [0.]).to(device)
         rewards = rewards + reward
         info = {'reward': rewards, 'r': reward, 'len_delta_L': others['len_delta_L'], 'radiu_delta_L': others['radius_delta_L'],
                 'epoch': 0, 'frame': step, 
                 'action_left':'{:.3f}, {:.3f}'.format(action_left[0], action_left[1])}
 
         fig = env.render_(fig, info, is_vis=False, is_save_gif=True, img_save_path=args.imgs_dir)
+        if done:
+            break
     # state3D_itk = sitk.GetImageFromArray(env.state3D_array)
     # sitk.WriteImage(state3D_itk, os.path.join(args.imgs_dir ,os.path.basename(dataDir)))
     images_to_video(args.imgs_dir, '*.jpg', isDelete=True, savename = 'Update%d'%(epoch))
-
-def caculate_gradient(L_degree, env_, base_state, h = 0.05):
-        manager = Manager()
-        return_dict = manager.dict()
-        radian_L = np.deg2rad(L_degree)
-        L_grad = np.zeros(2, dtype=np.float32)
-        def process_L(grad, radian_L, index, indice, return_dict):
-            # f0 = env_.simulate_reward(caculate_around(radian_L, index, -2*h), radian_R)
-            # f1 = env_.simulate_reward(caculate_around(radian_L, index, -1*h), radian_R)
-            # f3 = env_.simulate_reward(caculate_around(radian_L, index, 1*h), radian_R)
-            # f4 = env_.simulate_reward(caculate_around(radian_L, index, 2*h), radian_R)
-            # result = (f0-8*f1+8*f3-f4)/(12*h)
-            # return_dict[indice] = result
-            f0 = env_.simulate_reward(caculate_around(radian_L, index, -1*h), base_state)
-            f2 = env_.simulate_reward(caculate_around(radian_L, index, 1*h),base_state)
-            result = (f2-f0)/(2*h)
-            return_dict[indice] = result
-        def caculate_around(vec, index, delta):
-            vec_new = vec.copy()
-            vec_new[index] += (delta)
-            return vec_new
-        p1 = multiprocessing.Process(target=process_L, args=(L_grad, radian_L, 0, 0, return_dict))
-        p2 = multiprocessing.Process(target=process_L, args=(L_grad, radian_L, 1, 1, return_dict))
-        p1.start();p2.start()
-        p1.join();p2.join()
-        L_grad[0] = return_dict[0];L_grad[1] = return_dict[1]
-        return L_grad
-
-def get_gradVec(grads, p=10):
-    # return processed grad vector
-    gradVector = []
-    for grad in grads:
-        if np.abs(grad) >= np.exp(-p):
-            gradVector.append(np.array([np.log(np.abs(grad)) / p, np.sign(grad)])) 
-        else: 
-            gradVector.append(np.array([-1, np.exp(p)*grad]))
-    if len(gradVector) == 0:
-        return None
-    else:
-        return gradVector
 
 def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed=0, 
         steps_per_epoch=100, epochs=400, gamma=0.99, clip_ratio=0.2, pi_lr=1e-4,
@@ -278,7 +235,7 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
     # Special function to avoid certain slowdowns from PyTorch + MPI combo.
     # setup_pytorch_for_mpi()
 
-    device = torch.device("cuda")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if not os.path.exists(args.imgs_dir):
         os.makedirs(args.imgs_dir)
     if not os.path.exists(args.snapshot_dir):
@@ -294,10 +251,10 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
     # Set up logger and save configuration
     # logger = EpochLogger(**logger_kwargs)
     # logger.save_config(locals())
-    cfg = {'deg_threshold':[-65., 65., -45., 25.],
+    cfg = {'deg_threshold':[-90., 90., -50., 50.],#[-65., 65., -45., 25.],
            'reset':{'rdrange':[-45, 45],
                     'state_shape':(160, 80, 64) if not args.Leaning_to_Optimize else args.LTO_length*5+1},
-           'step':{'rotate_mag':[5, 5], 'discrete_action':args.discrete_action}
+           'step':{'rotate_mag':[10, 10], 'discrete_action':args.discrete_action}
            }
 
     print(cfg)
@@ -361,8 +318,6 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
     spine_datas = []
     for dataDir, pedicle_point in zip(dataDirs, pedicle_points):
         dataDir = os.path.join(os.getcwd(), dataDir)
-    # dataDir = os.path.join(os.getcwd(),'spineData/sub-verse835_dir-iso_L1_seg-vert_msk.nii.gz')
-    # pedicle_points = np.asarray([[25,56,69],[25,57,111]])
         pedicle_point_in_zyx = True #坐标是zyx形式吗？
         spine_datas.append(build_data_load(dataDir, pedicle_point, pedicle_point_in_zyx, input_z=64, input_y=80, input_x=160)) #spine_data 是一个包含了mask以及mask坐标矩阵以及椎弓根特征点的字典
         
@@ -371,12 +326,11 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
     for spine_data in spine_datas:
         env = build_Env(spine_data, cfg['deg_threshold'], cfg)  # 只修改了初始化函数，其他函数待修改
         envs.append(env)
-    # env = build_Env(spine_data, cfg['deg_threshold'], cfg)  # 只修改了初始化函数，其他函数待修改
     obs_dim = envs[0].state_shape
     act_dim = envs[0].action_num
 
     # Create actor-critic module
-    ac = actor_critic(obs_dim, act_dim, discrete=args.discrete_action, **ac_kwargs).to(device)
+    ac = actor_critic(obs_dim, act_dim, discrete=args.discrete_action, LTO = args.Leaning_to_Optimize, **ac_kwargs).to(device)
 
     # Sync params across processes
     # sync_params(ac)
@@ -463,10 +417,8 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
     env_index = 0
     env = envs[env_index]
     _, o_3D = env.reset(random_reset = False)
+    o_3D = torch.Tensor(o_3D).to(device)
     ep_ret, ep_len = 0, 0 
-    # o = torch.Tensor(o_3D).to(device)
-    
-
     # Main loop: collect experience in env and update/log each epoch
     global_step = 0
     for epoch in tqdm(range(1, epochs+1)):
@@ -475,73 +427,39 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
         pi_optimizer.param_groups[0]["lr"] = lrnow
         vf_optimizer.param_groups[0]["lr"] = lrnow
         for t in range(local_steps_per_epoch):
-            reward_dis_vec, L_hori_grad_vec = np.zeros(args.LTO_length, dtype=np.float32), np.zeros((args.LTO_length, 2), dtype=np.float32)
-            L_vert_grad_vec = np.zeros((args.LTO_length, 2), dtype=np.float32)
-            rew_buf, L_grad, delta_volume_buf = buf.rew_buf.copy(), buf.L_grad.copy(), buf.delta_volume_buf.copy()
-            
-            LTO_indice = max(buf.ptr - args.LTO_length, 0)
-            # reward_dis_vec[args.LTO_length-(buf.ptr-LTO_indice):] = -1*rew_buf[LTO_indice:buf.ptr] + rew_buf[buf.ptr]
-            # reward_dis_vec[args.LTO_length-(buf.ptr-LTO_indice):] = rew_buf[LTO_indice:buf.ptr]
-            reward_dis_vec[args.LTO_length-(buf.ptr-LTO_indice):] = delta_volume_buf[LTO_indice:buf.ptr]
-            L_hori_grad_vec[args.LTO_length-(buf.ptr-LTO_indice):] = get_gradVec(L_grad[:,0][LTO_indice:buf.ptr])
-            L_vert_grad_vec[args.LTO_length-(buf.ptr-LTO_indice):] = get_gradVec(L_grad[:,1][LTO_indice:buf.ptr])
-            L_hori_grad_vec = L_hori_grad_vec.reshape(L_hori_grad_vec.size)
-            L_vert_grad_vec = L_vert_grad_vec.reshape(L_vert_grad_vec.size)
-            now_volume = np.array([(3.14*(env.pre_line_len_L*env.pre_max_radius_L*env.pre_max_radius_L))/100,])
-            o = np.concatenate((reward_dis_vec, L_hori_grad_vec, L_vert_grad_vec, now_volume))
-            o = torch.Tensor(o).to(device)
-            a_Left, v, logp_a_Left = ac.step(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
-            state_, r, d, info, next_o_3d = env.step(a_Left)
-            delta_volume = info['delta_volume']
+            a_Left, v, logp_a_Left = ac.step(o_3D.unsqueeze_(0).unsqueeze_(0) if len(o_3D.shape) == 3 else o_3D)
+            state_, r, d, info, next_o_3D = env.step(a_Left)
             ep_ret += r
             ep_len += 1
-            this_degree_L = state_[2:]
-            L_grad = caculate_gradient(this_degree_L, env_=env, base_state=state_)
             # save and log
-            o = o.squeeze(0).squeeze(0).cpu().numpy() if len(o.shape) == 5 else o.cpu().numpy()
-            buf.store(o, a_Left, r, v, logp_a_Left, L_grad, delta_volume)
+            o_3D = o_3D.squeeze(0).squeeze(0).cpu().numpy() if len(o_3D.shape) == 5 else o_3D.cpu().numpy()
+            buf.store(o_3D, a_Left, r, v, logp_a_Left)
             # logger.store(VVals=v)
             
             # # Update obs (critical!)
-            # o_3D = next_o_3d
-            # o_3D = torch.Tensor(o_3D).to(device)
-
-            #timeout = ep_len == max_ep_len
-            terminal = False
+            o_3D = next_o_3D
+            o_3D = torch.Tensor(o_3D).to(device)
+            timeout = ep_len == max_ep_len
+            terminal = d or timeout
             epoch_ended = t==local_steps_per_epoch-1
             global_step = (epoch-1)*local_steps_per_epoch+t
+            writer.add_scalar("charts/step_return", r, global_step)
 
-            print(f"global_step={global_step}, episodic_return={r}")
-            writer.add_scalar("charts/episodic_return", r, global_step)
-            writer.add_scalar("charts/episodic_length", t+1, global_step)
+            print(f"global_step={global_step}, step_return={r}")
             if terminal or epoch_ended:
                 if epoch_ended and not(terminal):
                     print('Warning: trajectory cut off by epoch at %d steps.'%ep_len, flush=True)
                 # if trajectory didn't reach terminal state, bootstrap value target
                 if epoch_ended: #or timeout:
-                    reward_dis_vec, L_hori_grad_vec = np.zeros(args.LTO_length, dtype=np.float32), np.zeros((args.LTO_length, 2), dtype=np.float32)
-                    L_vert_grad_vec = np.zeros((args.LTO_length, 2), dtype=np.float32)
-                    rew_buf, L_grad, delta_volume_buf = buf.rew_buf.copy(), buf.L_grad.copy(), buf.delta_volume_buf.copy()
-            
-                    LTO_indice = max(buf.ptr - args.LTO_length, 0)
-                    # reward_dis_vec[args.LTO_length-(buf.ptr-LTO_indice):] = -1*rew_buf[LTO_indice:buf.ptr] + rew_buf[buf.ptr]
-                    # reward_dis_vec[args.LTO_length-(buf.ptr-LTO_indice):] = rew_buf[LTO_indice:buf.ptr]
-                    reward_dis_vec[args.LTO_length-(buf.ptr-LTO_indice):] = delta_volume_buf[LTO_indice:buf.ptr]
-                    L_hori_grad_vec[args.LTO_length-(buf.ptr-LTO_indice):] = get_gradVec(L_grad[:,0][LTO_indice:buf.ptr])
-                    L_vert_grad_vec[args.LTO_length-(buf.ptr-LTO_indice):] = get_gradVec(L_grad[:,1][LTO_indice:buf.ptr])
-                    L_hori_grad_vec = L_hori_grad_vec.reshape(L_hori_grad_vec.size)
-                    L_vert_grad_vec = L_vert_grad_vec.reshape(L_vert_grad_vec.size)
-                    now_volume = np.array([(3.14*(env.pre_line_len_L*env.pre_max_radius_L*env.pre_max_radius_L))/100,])
-                    o = np.concatenate((reward_dis_vec, L_hori_grad_vec, L_vert_grad_vec, now_volume))
-                    o = torch.Tensor(o).to(device)
-                    _, v, _ = ac.step(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
+                    _, v, _ = ac.step(o_3D.unsqueeze_(0).unsqueeze_(0) if len(o_3D.shape) == 3 else o_3D)
                 else:
                     v = 0
                 buf.finish_path(v)
-                # if terminal:
-                #     # only save EpRet / EpLen if trajectory finished
-                # logger.store(EpRet=ep_ret, EpLen=ep_len)
-                # o, ep_ret, ep_len = env.reset(), 0, 0
+                if terminal:
+                    # only save EpRet / EpLen if trajectory finished
+                    writer.add_scalar("charts/episodic_return", ep_ret, epoch)
+                    writer.add_scalar("charts/episodic_length", ep_len, epoch)
+                # o_3D, ep_ret, ep_len = env.reset(), 0, 0
                 # for env in envs:
                 #     _, _= env.reset(random_reset = False) # 每回合结束时把所所有环境reset
                 # env_index = (epoch)%len(envs)
@@ -551,8 +469,8 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
                         env_index += 1
                     env = envs[env_index%len(envs)]
                 _, o_3D = env.reset(random_reset = False)
+                o_3D = torch.Tensor(o_3D).to(device)
                 ep_ret, ep_len = 0, 0 
-                # o_3D = torch.Tensor(o_3D).to(device)
 
         # # Save model
         # if (epoch % save_freq == 0) or (epoch == epochs-1):
@@ -587,15 +505,15 @@ if __name__ == '__main__':
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--cpu', type=int, default=4)
     parser.add_argument('--steps', type=int, default=100)
-    parser.add_argument('--epochs', type=int, default=100)
+    parser.add_argument('--epochs', type=int, default=200)
     parser.add_argument('--save_freq', type=int, default=10)
     parser.add_argument('--exp_name', type=str, default='ppo')
-    parser.add_argument('--imgs_dir', type=str, default='./spinningup/imgs_volume_2d_discrete_length')
-    parser.add_argument('--snapshot_dir', type=str, default='./spinningup/snapshot_volume_2d_discrete_length')
+    parser.add_argument('--imgs_dir', type=str, default='./spinningup/imgs_3d_continue_volume')
+    parser.add_argument('--snapshot_dir', type=str, default='./spinningup/snapshot_3d_continue_volume')
     parser.add_argument('--KL', type=str, default='No KL')
     parser.add_argument('--clip', type=str, default='clip in env')
-    parser.add_argument('--Leaning_to_Optimize', type=bool, default=True)
-    parser.add_argument('--discrete_action', type=bool, default=True)
+    parser.add_argument('--Leaning_to_Optimize', type=bool, default=False)
+    parser.add_argument('--discrete_action', type=bool, default=False)
     parser.add_argument('--LTO_length', type=int, default=10)
     args = parser.parse_args()
 
@@ -607,6 +525,6 @@ if __name__ == '__main__':
     ppo(args, build_Env, actor_critic=core.MyMLPActorCritic,
         ac_kwargs=dict(hidden_sizes=[args.hid]*args.l), gamma=args.gamma, 
         seed=args.seed, steps_per_epoch=args.steps, epochs=args.epochs,
-        save_freq=args.save_freq, logger_kwargs=logger_kwargs)
+        save_freq=args.save_freq, logger_kwargs=logger_kwargs,max_ep_len=args.steps)
     
     # evluateothers(args, build_Env, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(hidden_sizes=[args.hid]*args.l))

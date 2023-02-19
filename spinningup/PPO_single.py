@@ -112,7 +112,7 @@ def evluateothers(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=di
         os.makedirs(args.imgs_dir)
     if not os.path.exists(args.snapshot_dir):
         os.makedirs(args.snapshot_dir)
-    device = torch.device("cuda")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # dataDirs = [
     #               'spineData/sub-verse621_L1_ALL_msk.nii.gz',
@@ -298,7 +298,7 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
     # Special function to avoid certain slowdowns from PyTorch + MPI combo.
     # setup_pytorch_for_mpi()
 
-    device = torch.device("cuda")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if not os.path.exists(args.imgs_dir):
         os.makedirs(args.imgs_dir)
     if not os.path.exists(args.snapshot_dir):
