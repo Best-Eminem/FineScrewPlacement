@@ -225,7 +225,7 @@ def evaluate(args, env, agent, epoch):
             L_vert_grad_vec[args.LTO_length-(buf.ptr-LTO_indice):] = get_gradVec(L_grad[:,1][LTO_indice:buf.ptr])
             L_hori_grad_vec = L_hori_grad_vec.reshape(L_hori_grad_vec.size)
             L_vert_grad_vec = L_vert_grad_vec.reshape(L_vert_grad_vec.size)
-            now_volume = np.array([(3.14*(env.pre_line_len_L*env.pre_max_radius_L*env.pre_max_radius_L))/100,])
+            now_volume = np.array([(3.14*(env.pre_line_len_L*env.pre_max_radius_L*env.pre_max_radius_L))/10000,])
             o = np.concatenate((reward_dis_vec, L_hori_grad_vec, L_vert_grad_vec, now_volume))
             o = torch.Tensor(o).to(device)
             action_left, v, logp_a_Left = agent.step(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
@@ -314,7 +314,7 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
     # Set up logger and save configuration
     # logger = EpochLogger(**logger_kwargs)
     # logger.save_config(locals())
-    cfg = {'deg_threshold':[-65., 65., -45., 25.],
+    cfg = {'deg_threshold':[-50., 50., -90., 90.],
            'reset':{'rdrange':[-45, 45],
                     'state_shape':(160, 80, 64) if not args.Leaning_to_Optimize else args.LTO_length*5+1},
            'step':{'rotate_mag':[5, 5], 'discrete_action':args.discrete_action}
@@ -507,7 +507,7 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
             L_vert_grad_vec[args.LTO_length-(buf.ptr-LTO_indice):] = get_gradVec(L_grad[:,1][LTO_indice:buf.ptr])
             L_hori_grad_vec = L_hori_grad_vec.reshape(L_hori_grad_vec.size)
             L_vert_grad_vec = L_vert_grad_vec.reshape(L_vert_grad_vec.size)
-            # now_volume = np.array([(3.14*(env.pre_line_len_L*env.pre_max_radius_L*env.pre_max_radius_L))/100,])
+            now_volume = np.array([(3.14*(env.pre_line_len_L*env.pre_max_radius_L*env.pre_max_radius_L))/10000,])
             o = np.concatenate((reward_dis_vec, L_hori_grad_vec, L_vert_grad_vec, now_volume))
             o = torch.Tensor(o).to(device)
             a_Left, v, logp_a_Left = ac.step(o.unsqueeze_(0).unsqueeze_(0) if len(o.shape) == 3 else o)
@@ -526,14 +526,13 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
             # o_3D = next_o_3d
             # o_3D = torch.Tensor(o_3D).to(device)
 
-            #timeout = ep_len == max_ep_len
-            terminal = False
+            timeout = ep_len == max_ep_len
+            terminal = d or timeout
             epoch_ended = t==local_steps_per_epoch-1
             global_step = (epoch-1)*local_steps_per_epoch+t
 
             print(f"global_step={global_step}, episodic_return={r}")
-            writer.add_scalar("charts/episodic_return", r, global_step)
-            writer.add_scalar("charts/episodic_length", t+1, global_step)
+            writer.add_scalar("charts/step_return", r, global_step)
             if terminal or epoch_ended:
                 if epoch_ended and not(terminal):
                     print('Warning: trajectory cut off by epoch at %d steps.'%ep_len, flush=True)
@@ -558,14 +557,10 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
                 else:
                     v = 0
                 buf.finish_path(v)
-                # if terminal:
-                #     # only save EpRet / EpLen if trajectory finished
-                # logger.store(EpRet=ep_ret, EpLen=ep_len)
-                # o, ep_ret, ep_len = env.reset(), 0, 0
-                # for env in envs:
-                #     _, _= env.reset(random_reset = False) # 每回合结束时把所所有环境reset
-                # env_index = (epoch)%len(envs)
-                # env = envs[env_index]
+                if terminal:
+                    # only save EpRet / EpLen if trajectory finished
+                    writer.add_scalar("charts/episodic_return", ep_ret, epoch)
+                    writer.add_scalar("charts/episodic_length", ep_len, epoch)
                 if epoch_ended:
                     if epoch % 50 == 0:
                         env_index += 1
@@ -610,8 +605,8 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--save_freq', type=int, default=10)
     parser.add_argument('--exp_name', type=str, default='ppo')
-    parser.add_argument('--imgs_dir', type=str, default='./spinningup/imgs_volume_2d_discrete_length')
-    parser.add_argument('--snapshot_dir', type=str, default='./spinningup/snapshot_volume_2d_discrete_length')
+    parser.add_argument('--imgs_dir', type=str, default='./spinningup/imgs_volume_2d_discrete_volume')
+    parser.add_argument('--snapshot_dir', type=str, default='./spinningup/snapshot_volume_2d_discrete_volume')
     parser.add_argument('--KL', type=str, default='No KL')
     parser.add_argument('--clip', type=str, default='clip in env')
     parser.add_argument('--Leaning_to_Optimize', type=bool, default=True)
@@ -627,6 +622,6 @@ if __name__ == '__main__':
     ppo(args, build_Env, actor_critic=core.MyMLPActorCritic,
         ac_kwargs=dict(hidden_sizes=[args.hid]*args.l), gamma=args.gamma, 
         seed=args.seed, steps_per_epoch=args.steps, epochs=args.epochs,
-        save_freq=args.save_freq, logger_kwargs=logger_kwargs)
+        save_freq=args.save_freq, logger_kwargs=logger_kwargs,max_ep_len=args.steps)
     
     # evluateothers(args, build_Env, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(hidden_sizes=[args.hid]*args.l))

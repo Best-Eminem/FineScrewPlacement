@@ -13,7 +13,7 @@ def coorSpace2LngLat(ppoint, R=None):
         R = np.linalg.norm(ppoint)
     return np.arcsin(ppoint[2] / R), np.arctan(ppoint[1] / ppoint[0])
 
-def coorLngLat2Space(angles_L, angles_R=None, R=1., default = False):
+def coorLngLat2Space(angles_L, angles_R=None, R=1., default = True):
     """返回旋转后的方向向量
 
     Args:
@@ -28,17 +28,21 @@ def coorLngLat2Space(angles_L, angles_R=None, R=1., default = False):
     y_L = R * np.cos(np.deg2rad(angles_L[1])) * np.cos(np.deg2rad(angles_L[0]))
     z_L = R * np.sin(np.deg2rad(angles_L[1]))
     if default:
-        if x_L>=0:
-            x_L = -x_L
+        # if x_L>=0:
+        #     x_L = -x_L
+        #     y_L = -y_L
+        if y_L>=0:
             y_L = -y_L
-    if angles_R != None:
+    if angles_R is not None:
         x_R = R * np.cos(np.deg2rad(angles_R[1])) * np.sin(np.deg2rad(angles_R[0]))
         y_R = R * np.cos(np.deg2rad(angles_R[1])) * np.cos(np.deg2rad(angles_R[0]))
         z_R = R * np.sin(np.deg2rad(angles_R[1]))
-        if default:
-            if x_R>=0:
-                x_R = -x_R
-                y_R = -y_R
+        # if default:
+        #     if x_R>=0:
+        #         x_R = -x_R
+        #         y_R = -y_R
+        if y_R>=0:
+            y_R = -y_R
         return np.array([x_L, y_L, z_L]), np.array([x_R, y_R, z_R])
     else: return np.array([x_L, y_L, z_L])
 
@@ -149,8 +153,8 @@ def getEndpoint(spine_xyz, spine, cpoint, dirvector, R=0.8, line_thres=None, poi
             maxzv = np.min(maxzvs)
     start_point = np.array([minxv, minyv, minzv])
     end_point = np.array([maxxv, maxyv, maxzv])
-    if distEuclid(start_point, end_point) <= 10:
-        print('error')
+    # if distEuclid(start_point, end_point) <= 10:
+    #     print('warning: too short for screw!') 
     return start_point, end_point
 
 
@@ -199,12 +203,13 @@ def lineInVerterbra(spine_xyz,spine, cpoint, start_point, end_point, point_dist,
         max_x, min_x = start_point[0], end_point[0]
     else: 
         max_x, min_x = end_point[0], start_point[0]
-    for index in range(len(ppp[0])):
-        if max_x >= ppp[0][index] >= min_x:
-            x_ppp.append(ppp[0][index])
-            y_ppp.append(ppp[1][index])
-            z_ppp.append(ppp[2][index])
-    return max_radius, line_len, (np.array(x_ppp),np.array(y_ppp),np.array(z_ppp))
+    # for index in range(len(ppp[0])):
+    #     if max_x >= ppp[0][index] >= min_x:
+    #         x_ppp.append(ppp[0][index])
+    #         y_ppp.append(ppp[1][index])
+    #         z_ppp.append(ppp[2][index])
+    # return max_radius, line_len, (np.array(x_ppp),np.array(y_ppp),np.array(z_ppp))
+    return max_radius, line_len, (ppp[0],ppp[1],ppp[2])
 
 def getLenRadiu(spine_xyz, spine, cpoint, dirvector, R=0.8, line_thres=None, radiu_thres = None, point_dist=None, line_dist=None):
     # 计算

@@ -28,7 +28,7 @@ class SpineEnv(gym.Env):
         self.pedicle_points = spineData['pedicle_points']
         self.centerPointL = self.pedicle_points[0]
         self.centerPointR = self.pedicle_points[1]
-        self.action_num = 2 
+        self.action_num = 2 #δhorizon,δverticle
         self.rotate_mag = self.step_opt['rotate_mag'] # 直线旋转度数的量级 magtitude of rotation (δlatitude,δlongitude) of line
         self.reward_weight = [0.1, 0.1] # 计算每步reward的权重 weights for every kind of reward (), [line_delta, radius_delta] respectively
         self.degree_threshold = degree_threshold # 用于衡量终止情况的直线经纬度阈值 [minimum latitude, maximum latitude, minimum longitude, maximum longitude]
@@ -56,7 +56,7 @@ class SpineEnv(gym.Env):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
-    def computeInitDegree(self,random_reset=True): # TODO: it still needs to refine after we can get more point
+    def computeInitDegree(self, random_reset = False): # TODO: it still needs to refine after we can get more point
         # 初始化倾斜角度，添加噪声
         # if self.reset_opt.initdegree:
         #     deg = self.reset_opt.initdegree
@@ -69,8 +69,11 @@ class SpineEnv(gym.Env):
         #     return np.array(deg)
         # return np.array([0.,0.])
         if random_reset:
-            return np.array([0.,0.]) + self.np_random.uniform(low = self.reset_opt['rdrange'][0], high = self.reset_opt['rdrange'][1], size = [2,]),\
-                    np.array([0.,0.]) + self.np_random.uniform(low = self.reset_opt['rdrange'][0], high = self.reset_opt['rdrange'][1], size = [2,])
+            horizon_left = self.np_random.uniform(low = self.degree_threshold[0], high = self.degree_threshold[1], size = [1,])[0]
+            sagtal_left = self.np_random.uniform(low = self.degree_threshold[2], high = self.degree_threshold[3], size = [1,])[0]
+            horizon_right = self.np_random.uniform(low = self.degree_threshold[0], high = self.degree_threshold[1], size = [1,])[0]
+            sagtal_right = self.np_random.uniform(low = self.degree_threshold[2], high = self.degree_threshold[3], size = [1,])[0]
+            return np.array([horizon_left,sagtal_left]), np.array([horizon_right,sagtal_right])
         else: return np.array([0.,0.]), np.array([0.,0.])
 
     def computeInitCPoint(self): # TODO: it still needs to refine after we can get more point
@@ -95,7 +98,7 @@ class SpineEnv(gym.Env):
         self.steps_before_done = None # 设置当前步数为None
         init_degree_L, init_degree_R = self.computeInitDegree(random_reset)
         init_cpoint_L, init_cpoint_R = self.computeInitCPoint()
-        dire_vector_L, dire_vector_R = utils3.coorLngLat2Space(init_degree_L, init_degree_R) #螺钉方向向量
+        dire_vector_L, dire_vector_R = utils3.coorLngLat2Space(init_degree_L, init_degree_R, default=True) #螺钉方向向量
         self.dist_mat_point_L = utils3.spine2point(self.mask_coards, self.mask_array, init_cpoint_L)
         self.dist_mat_point_R = utils3.spine2point(self.mask_coards, self.mask_array, init_cpoint_R)
         self.dist_mat_line_L = utils3.spine2line(self.mask_coards, self.mask_array, init_cpoint_L, dire_vector_L)
@@ -106,7 +109,6 @@ class SpineEnv(gym.Env):
         self.pre_max_radius_R, self.pre_line_len_R, self.endpoints_R = utils3.getLenRadiu \
             (self.mask_coards, self.mask_array, init_cpoint_R, dire_vector_R, R=1, line_thres=self.line_thres,
              radiu_thres=self.radiu_thres, point_dist=self.dist_mat_point_R, line_dist=self.dist_mat_line_R)    
-        # self.state_matrix = np.concatenate([[self.pre_max_radius], init_degree, init_cpoint])
         state_3D = self.draw_state(self.endpoints_L, self.endpoints_R)
         state_list = [self.pre_max_radius_L, self.pre_max_radius_R, self.pre_line_len_L, self.pre_line_len_R]
         state_list.extend(init_degree_L)
@@ -143,23 +145,16 @@ class SpineEnv(gym.Env):
         return len_delta_L, len_delta_R, radius_delta_L, radius_delta_R
 
     def step(self, action_L, action_R):
-        # action = self.rotate_mag[0] * action
-        # assert self.action_space.contains(action), \
-        #     "%r (%s) invalid" % (action, type(action))
-        # ------------------------------------------
-        #Cast action to float to strip np trappings
         if self.discrete_action:
             discrete_vec = np.array([-0.25,-0.2,-0.15,-0.1,-0.05,.0,0.05,0.1,0.15,0.2,0.25])
             discrete_vec = np.rad2deg(discrete_vec)
-            rotate_deg_L = discrete_vec[action_L]
-            rotate_deg_R = discrete_vec[action_R]
+            rotate_deg_L = np.array([discrete_vec[action_L[0]], discrete_vec[action_L[1]]])
+            rotate_deg_R = np.array([discrete_vec[action_R[0]], discrete_vec[action_R[1]]])
         else:
-            action_L = np.clip(action_L, -1.0, 1.0)
-            action_R = np.clip(action_R, -1.0, 1.0)
+            # action_L = np.clip(action_L, -1.0, 1.0)
+            # action_R = np.clip(action_R, -1.0, 1.0)
             rotate_deg_L = self.rotate_mag * action_L[0:2]
             rotate_deg_R = self.rotate_mag * action_R[0:2]
-        # move_cp = self.trans_mag * action[2:]
-        # step forward
         this_degree_L, this_degree_R = self.stepPhysics(self.state_matrix, rotate_deg_L,rotate_deg_R, delta_cpoint = None)
         this_dirpoint_L, this_dirpoint_R = utils3.coorLngLat2Space(this_degree_L, this_degree_R, R=1., default = True)
         self.dist_mat_point_L = utils3.spine2point(self.mask_coards, self.mask_array, self.centerPointL)
@@ -197,48 +192,20 @@ class SpineEnv(gym.Env):
             or not (self.degree_threshold[2]<= self.state_matrix[7] <= self.degree_threshold[3]) \
             # or not utils3.pointInSphere(self.state_matrix[3:], self.cp_threshold)
         done_L, done_R = bool(done_L), bool(done_R)
-        done = done_L and done_R
-
-        # # -------------------------
-        # # Compute reward method1
-        # if not done:
-        #     len_delta, radius_delta = self.getReward(self.state_matrix) #当前的reward的计算，均为针对上一步的，可考虑改为针对历史最优值来计算
-        #     if len_delta < 0 or radius_delta < 0:
-        #         reward = len_delta #+ 10 * radius_delta
-        #     else:
-        #         reward = len_delta #+ self.weight[1] * radius_delta
-        #         # reward = self.weight[0] * len_delta #+ self.weight[1] * radius_delta
-        # elif self.steps_before_done is None:
-        #     self.steps_before_done = 0
-        #     len_delta, radius_delta = self.getReward(self.state_matrix)
-        #     if len_delta < 0 or radius_delta < 0:
-        #         reward = len_delta #+ 10 * radius_delta
-        #     else:
-        #         reward = len_delta #+ self.weight[1] * radius_delta
-        # else:
-        #     if self.steps_before_done == 0:
-        #         logger.warn("""
-        #                     You are calling 'step()' even though this environment has already returned
-        #                     done = True. You should always call 'reset()' once you receive 'done = True'
-        #                     Any further steps are undefined behavior.
-        #                     """)
-        #     self.steps_before_done += 1
-        #     len_delta, radius_delta = self.getReward(self.state_matrix)
-        #     reward = -1000.  
-
-        # --------------------------------------------------------------------------------------
-        # Compute reward method2
+        done = done_L or done_R
         pre_volume = (3.14*(self.pre_line_len_L*self.pre_max_radius_L*self.pre_max_radius_L)+3.14*(self.pre_line_len_R*self.pre_max_radius_R*self.pre_max_radius_R))/2
         len_delta_L, len_delta_R, radius_delta_L, radius_delta_R = self.getReward(self.state_matrix)
         # reward为当前螺钉长度减去一个base值
         # reward = (self.state_matrix[2] + self.state_matrix[3])/ (70*2) 
         now_volume = (3.14*(self.state_matrix[2]*self.state_matrix[0]*self.state_matrix[0])+3.14*(self.state_matrix[3]*self.state_matrix[1]*self.state_matrix[1]))/2
-        reward = np.log(now_volume) - np.log(pre_volume) #reward为体积差
+        # reward = np.log(now_volume) - np.log(pre_volume) #reward为体积差
+        delta_volume = (now_volume - pre_volume)/10000
+        reward = now_volume/10000.0
         state_ = self.state_matrix * 1.0
         return np.asarray(state_, dtype=np.float32), reward, done, \
             {'len_delta_L': len_delta_L, 'len_delta_R': len_delta_R, \
              'radius_delta_L': radius_delta_L, 'radius_delta_R': radius_delta_R, \
-             'action_left':rotate_deg_L, 'action_right':rotate_deg_R}, self.normalize(state_3D)
+             'action_left':rotate_deg_L, 'action_right':rotate_deg_R, 'delta_volume':delta_volume}, self.normalize(state_3D)
 
     def render_(self, fig, info=None, is_vis=False, is_save_gif=False, img_save_path=None, **kwargs):
         # fig = plt.figure()
@@ -256,10 +223,10 @@ class SpineEnv(gym.Env):
         ax2.scatter(self.endpoints_L['end_point'][1], self.endpoints_L['end_point'][2], c='g')
         ax2.scatter(self.endpoints_L['cpoint'][1], self.endpoints_L['cpoint'][2], c='g')
 
-        ax2.scatter(self.endpoints_R['radiu_p'][1], self.endpoints_R['radiu_p'][2], c='blue')
-        ax2.scatter(self.endpoints_R['start_point'][1], self.endpoints_R['start_point'][2], c='yellow')
-        ax2.scatter(self.endpoints_R['end_point'][1], self.endpoints_R['end_point'][2], c='yellow')
-        ax2.scatter(self.endpoints_R['cpoint'][1], self.endpoints_R['cpoint'][2], c='yellow')
+        ax2.scatter(self.endpoints_R['radiu_p'][1], self.endpoints_R['radiu_p'][2], c='white')
+        ax2.scatter(self.endpoints_R['start_point'][1], self.endpoints_R['start_point'][2], c='g')
+        ax2.scatter(self.endpoints_R['end_point'][1], self.endpoints_R['end_point'][2], c='g')
+        ax2.scatter(self.endpoints_R['cpoint'][1], self.endpoints_R['cpoint'][2], c='g')
         ax2.set_xlabel('Y-axis')
         ax2.set_ylabel('Z-axis')
         ax2.invert_yaxis()
@@ -271,19 +238,14 @@ class SpineEnv(gym.Env):
         ax3.scatter(self.endpoints_L['end_point'][0], self.endpoints_L['end_point'][1], c='g')
         ax3.scatter(self.endpoints_L['cpoint'][0], self.endpoints_L['cpoint'][1], c='g')
 
-        ax3.scatter(self.endpoints_R['radiu_p'][0], self.endpoints_R['radiu_p'][1], c='blue')
-        ax3.scatter(self.endpoints_R['start_point'][0], self.endpoints_R['start_point'][1], c='yellow')
-        ax3.scatter(self.endpoints_R['end_point'][0], self.endpoints_R['end_point'][1], c='yellow')
-        ax3.scatter(self.endpoints_R['cpoint'][0], self.endpoints_R['cpoint'][1], c='yellow')
+        ax3.scatter(self.endpoints_R['radiu_p'][0], self.endpoints_R['radiu_p'][1], c='white')
+        ax3.scatter(self.endpoints_R['start_point'][0], self.endpoints_R['start_point'][1], c='g')
+        ax3.scatter(self.endpoints_R['end_point'][0], self.endpoints_R['end_point'][1], c='g')
+        ax3.scatter(self.endpoints_R['cpoint'][0], self.endpoints_R['cpoint'][1], c='g')
         ax3.set_xlabel('X-axis')
         ax3.set_ylabel('Y-axis')
         ax3.invert_yaxis()
         if info is not None:
-            # ax2.text(2, -9, '#len_d:' + '%.4f' % info['len_delta'], color='red', fontsize=10)
-            # ax2.text(2, -2, '#radius_d:' + '%.4f' % info['radiu_delta'], color='red', fontsize=10)
-            # ax2.text(2, -18, '#action_x:' + '%.4f' % info['action'][2], color='red', fontsize=10)
-            # ax2.text(2, -10, '#action_y:' + '%.4f' % info['action'][3], color='red', fontsize=10)
-            # ax2.text(2, -2, '#action_z:' + '%.4f' % info['action'][4], color='red', fontsize=10)
             ax3.text(2, -60, '#Reward:' + '%.4f' % info['r'], color='red', fontsize=20)
             ax3.text(2, -90, '#TotalR:' + '%.4f' % info['reward'], color='red', fontsize=20)
             ax3.text(2, -120, '#action_L:' + '%s' % info['action_left'], color='red', fontsize=15)
@@ -340,5 +302,37 @@ class SpineEnv(gym.Env):
         pre_max_radius_L, pre_max_radius_R, pre_line_len_L, pre_line_len_R, = base_state[0],base_state[1],base_state[2],base_state[3]
         pre_volume = (3.14*(pre_line_len_L*pre_max_radius_L*pre_max_radius_L)+3.14*(pre_line_len_R*pre_max_radius_R*pre_max_radius_R))/2  
         now_volume = (3.14*(state_matrix[2]*state_matrix[0]*state_matrix[0])+3.14*(state_matrix[3]*state_matrix[1]*state_matrix[1]))/2
-        reward = np.log(now_volume) - np.log(pre_volume) #reward为体积差
+        # reward = np.log(now_volume) - np.log(pre_volume) #reward为体积差
+        reward = now_volume/10000.0 #reward为体积差
         return reward
+
+    def simulate_volume(self, radian_L, radian_R, draw_screw = False):
+        this_degree_L, this_degree_R = np.rad2deg(radian_L), np.rad2deg(radian_R)
+        this_dirpoint_L, this_dirpoint_R = utils3.coorLngLat2Space(this_degree_L, this_degree_R, R=1., default = True)
+        dist_mat_point_L = utils3.spine2point(self.mask_coards, self.mask_array, self.centerPointL)
+        dist_mat_point_R = utils3.spine2point(self.mask_coards, self.mask_array, self.centerPointR)
+        dist_mat_line_L = utils3.spine2line(self.mask_coards, self.mask_array, self.centerPointL, this_dirpoint_L)
+        dist_mat_line_R = utils3.spine2line(self.mask_coards, self.mask_array, self.centerPointR, this_dirpoint_R)
+        max_radius_L, line_len_L, endpoints_L = utils3.getLenRadiu \
+            (self.mask_coards, self.mask_array, self.centerPointL, this_dirpoint_L, R=1, line_thres=self.line_thres,
+             radiu_thres=self.radiu_thres, point_dist=dist_mat_point_L, line_dist=dist_mat_line_L)
+        max_radius_R, line_len_R, endpoints_R = utils3.getLenRadiu \
+            (self.mask_coards, self.mask_array, self.centerPointR, this_dirpoint_R, R=1, line_thres=self.line_thres,
+             radiu_thres=self.radiu_thres, point_dist=dist_mat_point_R, line_dist=dist_mat_line_R)
+
+        state_list = [max_radius_L, max_radius_R, line_len_L, line_len_R]
+        state_list.extend(this_degree_L)
+        state_list.extend(this_degree_R)
+        state_matrix = np.asarray(state_list, dtype=np.float32)
+        # self.state_matrix中存储的是degree，而送入网络时的是弧度
+        if max_radius_L < 0.: # todo 仍需要再思考
+            line_len_L = 0.01
+            state_matrix[2] = 0.01
+        if max_radius_R < 0.: # todo 仍需要再思考
+            line_len_R = 0.01
+            state_matrix[3] = 0.01
+        now_volume = (3.14*(state_matrix[2]*state_matrix[0]*state_matrix[0])+3.14*(state_matrix[3]*state_matrix[1]*state_matrix[1]))/2
+        state3D_array = self.draw_state(endpoints_L, endpoints_R)
+        if draw_screw:
+            return now_volume, state3D_array, state_matrix
+        else: return now_volume
