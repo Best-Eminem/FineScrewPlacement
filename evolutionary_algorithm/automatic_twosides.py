@@ -41,11 +41,11 @@ if __name__ == '__main__':
                                 [[48,52,60],[46,51,122]],
                                  ])
     angles =  np.asarray([
-                        [[0.05, -0.55],[-0.17, -0.50]],
+                        [[0.05, -0.55],[-0.12, -0.55]],
                         [[0.1, -0.50],[-0.07, -0.45]],
-                        [[0.1, -0.65],[-0.07, -0.55]],
-                        [[0.0, -0.65],[-0.02, -0.70]],
-                        [[0.5, 0.0],[-0.32, -0.05]],
+                        [[0.1, -0.65],[-0.07, -0.40]],
+                        [[0.05, -0.70],[-0.02, -0.70]],
+                        [[0.5, 0.0],[-0.60, -0.2]],
                         ])
     env_matrixs = []
     for env_matrix in angles:
@@ -80,6 +80,6 @@ if __name__ == '__main__':
             v, state_3D, state_matrix = env.simulate_volume(radian_L, radian_R, draw_screw=True)
             # radius, length = r, l
             max_radius_L, max_radius_R, line_len_L, line_len_R = state_matrix[0], state_matrix[1],state_matrix[2],state_matrix[3],
-            print('movie_621_L{}_{} max_radius_L, max_radius_R, line_len_L, line_len_R {}'.format(str(j+1), str(index+1), [max_radius_L, max_radius_R, line_len_L, line_len_R]))
+            print('movie_surface_621_L{}_{} max_radius_L, line_len_L, max_radius_R, line_len_R {}'.format(str(j+1), str(index+1), [max_radius_L, line_len_L, max_radius_R, line_len_R]))
             state3D_itk = sitk.GetImageFromArray(np.transpose(state_3D, (2, 1, 0)))
-            sitk.WriteImage(state3D_itk, os.path.join(os.getcwd(),'movie_621_L{}_{}.nii.gz'.format(str(j+1), str(index+1))))
+            sitk.WriteImage(state3D_itk, os.path.join(os.getcwd(),'movie_surface_621_L{}_{}.nii.gz'.format(str(j+1), str(index+1))))

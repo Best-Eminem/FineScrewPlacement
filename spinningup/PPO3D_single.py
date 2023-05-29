@@ -243,8 +243,8 @@ def evaluate(args, envs, agent, epoch):
                     'action_left':'{:.3f}, {:.3f}'.format(action_left[0], action_left[1])}
 
             fig = env.render_(fig, info, is_vis=False, is_save_gif=True, img_save_path=args.imgs_dir)
-            if done:
-                break
+            # if done:
+            #     break
         # state3D_itk = sitk.GetImageFromArray(env.state3D_array)
         # sitk.WriteImage(state3D_itk, os.path.join(args.imgs_dir ,os.path.basename(dataDir)))
         images_to_video(args.imgs_dir, '*.jpg', isDelete=True, savename = 'Env_%d_%d'%(index+1, epoch))
@@ -273,8 +273,8 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
     # Set up logger and save configuration
     # logger = EpochLogger(**logger_kwargs)
     # logger.save_config(locals())
-    cfg = {'deg_threshold':[-30., 30., -50., 10.],#[-50., 50., -90., 90.],#[-65., 65., -45., 25.],
-           'screw_index':args.screw_index,
+    cfg = {'screw_index':args.screw_index,
+           'deg_threshold':[0., 30., -50., 10.] if args.screw_index==0 else [-30., 0., -50., 10.],#[-50., 50., -90., 90.],#[-65., 65., -45., 25.],
            'reset':{'rdrange':[-45, 45],
                     'state_shape':(160, 80, 64) if not args.Leaning_to_Optimize else args.LTO_length*5+1},
            'step':{'rotate_mag':[10, 10], 'discrete_action':args.discrete_action}
@@ -292,25 +292,25 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
                 r'spineData/sub-verse506_dir-iso_L1_ALL_msk.nii.gz',
                 r'spineData/sub-verse521_dir-ax_L1_ALL_msk.nii.gz',
 
-                #r'spineData/sub-verse518_dir-ax_L2_ALL_msk.nii.gz',
-                # r'spineData/sub-verse536_dir-ax_L2_ALL_msk.nii.gz',
-                # r'spineData/sub-verse586_dir-iso_L2_ALL_msk.nii.gz',
-                # r'spineData/sub-verse621_L2_ALL_msk.nii.gz',
+                r'spineData/sub-verse518_dir-ax_L2_ALL_msk.nii.gz',
+                r'spineData/sub-verse536_dir-ax_L2_ALL_msk.nii.gz',
+                r'spineData/sub-verse586_dir-iso_L2_ALL_msk.nii.gz',
+                r'spineData/sub-verse621_L2_ALL_msk.nii.gz',
 
-                # r'spineData/sub-verse510_dir-ax_L3_ALL_msk.nii.gz',
-                # r'spineData/sub-verse518_dir-ax_L3_ALL_msk.nii.gz',
-                # r'spineData/sub-verse818_dir-ax_L3_ALL_msk.nii.gz',
-                # r'spineData/sub-verse621_L3_ALL_msk.nii.gz',
+                r'spineData/sub-verse510_dir-ax_L3_ALL_msk.nii.gz',
+                r'spineData/sub-verse518_dir-ax_L3_ALL_msk.nii.gz',
+                r'spineData/sub-verse818_dir-ax_L3_ALL_msk.nii.gz',
+                r'spineData/sub-verse621_L3_ALL_msk.nii.gz',
 
-                # r'spineData/sub-verse514_dir-ax_L4_ALL_msk.nii.gz',
-                # r'spineData/sub-verse534_dir-iso_L4_ALL_msk.nii.gz',
-                # r'spineData/sub-verse537_dir-iso_L4_ALL_msk.nii.gz',
-                # r'spineData/sub-verse621_L4_ALL_msk.nii.gz',
+                r'spineData/sub-verse514_dir-ax_L4_ALL_msk.nii.gz',
+                r'spineData/sub-verse534_dir-iso_L4_ALL_msk.nii.gz',
+                r'spineData/sub-verse537_dir-iso_L4_ALL_msk.nii.gz',
+                r'spineData/sub-verse621_L4_ALL_msk.nii.gz',
                 
-                # r'spineData/sub-verse505_L5_ALL_msk.nii.gz',
-                # r'spineData/sub-verse510_dir-ax_L5_ALL_msk.nii.gz',
-                # r'spineData/sub-verse614_L5_ALL_msk.nii.gz',
-                # r'spineData/sub-verse621_L5_ALL_msk.nii.gz',
+                r'spineData/sub-verse505_L5_ALL_msk.nii.gz',
+                r'spineData/sub-verse510_dir-ax_L5_ALL_msk.nii.gz',
+                r'spineData/sub-verse614_L5_ALL_msk.nii.gz',
+                r'spineData/sub-verse621_L5_ALL_msk.nii.gz',
                 ]
     pedicle_points = np.asarray([
                                 [[35,47,65],[36,47,105]],
@@ -318,25 +318,25 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
                                 [[38,43,67],[38,43,108]],
                                 [[30,46,65],[30,46,108]],
                                 
-                                # [[33,42,64],[37,44,103]],
-                                # [[33,40,57],[31,45,96]],
-                                # [[33,43,66],[36,43,101]],
-                                # [[36,48,62],[38,48,102]],
+                                [[33,42,64],[37,44,103]],
+                                [[33,40,57],[31,45,96]],
+                                [[33,43,66],[36,43,101]],
+                                [[36,48,62],[38,48,102]],
                                  
-                                # [[33,44,67],[33,42,101]],
-                                # [[33,43,59],[38,45,101]],
-                                # [[33,47,61],[36,46,108]],
-                                # [[38,47,62],[39,47,104]],
+                                [[33,44,67],[33,42,101]],
+                                [[33,43,59],[38,45,101]],
+                                [[33,47,61],[36,46,108]],
+                                [[38,47,62],[39,47,104]],
                                  
-                                # [[59,45,60],[51,44,109]],
-                                # [[35,43,63],[33,46,105]],
-                                # [[46,44,63],[46,44,101]],
-                                # [[43,48,60],[44,48,107]],
+                                [[59,45,60],[51,44,109]],
+                                [[35,43,63],[33,46,105]],
+                                [[46,44,63],[46,44,101]],
+                                [[43,48,60],[44,48,107]],
                                  
-                                # [[34,43,61],[34,41,102]],
-                                # [[45,52,68],[45,43,110]],
-                                # [[42,45,64],[40,44,113]],
-                                # [[48,52,60],[46,51,122]],
+                                [[34,43,61],[34,41,102]],
+                                [[45,52,68],[45,43,110]],
+                                [[42,45,64],[40,44,113]],
+                                [[48,52,60],[46,51,122]],
                                  ])
     
     # Instantiate environment
@@ -489,7 +489,7 @@ def ppo(args, env_fn, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(), seed
                 # env_index = (epoch)%len(envs)
                 # env = envs[env_index]
                 if epoch_ended:
-                    if epoch % 10 == 0:
+                    if epoch % 20 == 0:
                         env_index += 1
                         # pi_optimizer.param_groups[0]["lr"] = pi_lr
                         # vf_optimizer.param_groups[0]["lr"] = vf_lr
@@ -531,12 +531,12 @@ if __name__ == '__main__':
     parser.add_argument('--seed', '-s', type=int, default=0)
     parser.add_argument('--cpu', type=int, default=4)
     parser.add_argument('--steps', type=int, default=100)
-    parser.add_argument('--epochs', type=int, default=400)
+    parser.add_argument('--epochs', type=int, default=1000)
     parser.add_argument('--screw_index', type=int, default=0)
-    parser.add_argument('--save_freq', type=int, default=10)
+    parser.add_argument('--save_freq', type=int, default=100)
     parser.add_argument('--exp_name', type=str, default='ppo')
-    parser.add_argument('--imgs_dir', type=str, default='./spinningup/imgs_3d_discrete_volume_4L1')
-    parser.add_argument('--snapshot_dir', type=str, default='./spinningup/snapshot_3d_discrete_volume_4L1')
+    parser.add_argument('--imgs_dir', type=str, default='./spinningup/imgs_3d_discrete_3_surface_all')
+    parser.add_argument('--snapshot_dir', type=str, default='./spinningup/snapshot_3d_discrete_3_surface_all')
     parser.add_argument('--KL', type=str, default='No KL')
     parser.add_argument('--clip', type=str, default='clip in env')
     parser.add_argument('--Leaning_to_Optimize', type=bool, default=False)
@@ -550,9 +550,9 @@ if __name__ == '__main__':
     from run_utils import setup_logger_kwargs
     logger_kwargs = setup_logger_kwargs(args.exp_name, args.seed)
 
-    # ppo(args, build_Env, actor_critic=core.MyMLPActorCritic,
-    #     ac_kwargs=dict(hidden_sizes=[args.hid]*args.l), gamma=args.gamma, 
-    #     seed=args.seed, steps_per_epoch=args.steps, epochs=args.epochs,
-    #     save_freq=args.save_freq, logger_kwargs=logger_kwargs,max_ep_len=args.steps)
+    ppo(args, build_Env, actor_critic=core.MyMLPActorCritic,
+        ac_kwargs=dict(hidden_sizes=[args.hid]*args.l), gamma=args.gamma, 
+        seed=args.seed, steps_per_epoch=args.steps, epochs=args.epochs,
+        save_freq=args.save_freq, logger_kwargs=logger_kwargs,max_ep_len=args.steps)
     
-    evluateothers(args, build_Env, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(hidden_sizes=[args.hid]*args.l))
+    # evluateothers(args, build_Env, actor_critic=core.MyMLPActorCritic, ac_kwargs=dict(hidden_sizes=[args.hid]*args.l))

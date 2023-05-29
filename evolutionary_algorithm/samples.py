@@ -1,8 +1,8 @@
 import numpy as np
 
 num_samples = 5
-desired_mean = 8688
-desired_std_dev = 1345
+desired_mean = 2144
+desired_std_dev = 186
 
 samples = np.random.normal(loc=0.0, scale=desired_std_dev, size=num_samples)
 
@@ -28,6 +28,7 @@ final_std = np.std(final_samples,ddof=1)
 print("Final samples stats     : mean = {:.4f} stdv = {:.4f}".format(final_mean, final_std))
 
 print(final_samples)
+print('最大值：',max(final_samples))
 print('最小值：',min(final_samples))
 print(np.mean(final_samples))
 print(np.std(final_samples,ddof=1))

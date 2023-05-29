@@ -219,7 +219,7 @@ class LTOMLPCategoricalActor(Actor):
             return pi.log_prob(act).reshape(shape).sum(axis=-1)
         return pi.log_prob(act).sum(axis=-1)
 
-class MLPCritic(nn.Module):
+class  MLPCritic(nn.Module):
     def __init__(self, obs_dim, hidden_sizes, activation):
         super().__init__()
         self.v_net = nn.Sequential(
@@ -259,7 +259,7 @@ class MyMLPActorCritic(nn.Module):
         if discrete:
             if LTO:
                 self.pi = LTOMLPCategoricalActor(observation_shape, action_shape, hidden_sizes, activation)
-            else: self.pi = MLPCategoricalActor(observation_shape, action_shape, hidden_sizes, activation)
+            else: self.pi = MLPCategoricalActor(observation_shape, action_shape, hidden_sizes, activation, discrete_dim=11)
         else: 
             if LTO:
                 self.pi = LTOMLPGaussianActor(observation_shape, action_shape, hidden_sizes, activation)

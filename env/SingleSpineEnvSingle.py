@@ -133,6 +133,7 @@ class SpineEnv(gym.Env):
     def step(self, action_L):
         if self.discrete_action:
             discrete_vec = np.array([-0.25,-0.2,-0.15,-0.1,-0.05,.0,0.05,0.1,0.15,0.2,0.25])
+            # discrete_vec = np.array([-0.05,.0,0.05])
             # discrete_vec = np.array([-0.1,-0.05,.0,0.05,0.1])
             discrete_vec = np.rad2deg(discrete_vec)
             rotate_deg_L = np.array([discrete_vec[action_L[0]], discrete_vec[action_L[1]]])
@@ -165,15 +166,17 @@ class SpineEnv(gym.Env):
             # or not utils3.pointInSphere(self.state_matrix[3:], self.cp_threshold)
         done_L = bool(done_L)
         done = done_L
-        pre_volume = (3.14*(self.pre_line_len_L*self.pre_max_radius_L*self.pre_max_radius_L))
+        # pre_volume = (3.14*(self.pre_line_len_L*self.pre_max_radius_L*self.pre_max_radius_L))
+        pre_volume = 2*self.pre_line_len_L*self.pre_max_radius_L
         len_delta_L, radius_delta_L = self.getReward(self.state_matrix)
         # reward为当前螺钉长度减去一个base值
         # reward = (self.state_matrix[2] + self.state_matrix[3])/ (70*2) 
-        now_volume = (3.14*(self.state_matrix[1]*self.state_matrix[0]*self.state_matrix[0]))
+        # now_volume = (3.14*(self.state_matrix[1]*self.state_matrix[0]*self.state_matrix[0]))
+        now_volume = 2*self.state_matrix[1]*self.state_matrix[0]
         # reward = np.log(now_volume) - np.log(pre_volume) #reward为体积差
-        delta_volume = (now_volume - pre_volume)/10000
+        delta_volume = (now_volume - pre_volume)/1000
         # reward = now_volume/10000.0 #reward为体积差
-        reward = now_volume/10000.0 #reward为体积差
+        reward = now_volume/1000.0#reward为体积差
         # reward = self.state_matrix[1]/70.0
         state_ = self.state_matrix * 1.0
         return np.asarray(state_, dtype=np.float32), reward, done, \
@@ -216,7 +219,8 @@ class SpineEnv(gym.Env):
             ax3.text(2, 110, '#frame:%.4d' % info['frame'], color='red', fontsize=20)
             ax2.text(2, -30, '#radius:%.2f' % (self.state_matrix[0]), color='red', fontsize=15)
             ax2.text(2, -45, '#length:%.2f' % (self.state_matrix[1]), color='red', fontsize=15)
-            ax2.text(2, -60, '#volume_L:%.1f' % (3.14*self.state_matrix[1]*self.state_matrix[0]*self.state_matrix[0]), color='red', fontsize=15)
+            # ax2.text(2, -60, '#volume_L:%.1f' % (3.14*self.state_matrix[1]*self.state_matrix[0]*self.state_matrix[0]), color='red', fontsize=15)
+            ax2.text(2, -60, '#surface_L:%.1f' % (2.0*self.state_matrix[1]*self.state_matrix[0]), color='red', fontsize=15)
             ax2.text(2, -75, '#angle_L:%.1f, %.1f' % (self.state_matrix[2], self.state_matrix[3]), color='red', fontsize=15)
         if is_save_gif:
             if info is not None:
@@ -251,7 +255,7 @@ class SpineEnv(gym.Env):
             line_len_L = 0.01
             state_matrix[1] = 0.01
         pre_max_radius_L, pre_line_len_L = base_state[0],base_state[1]
-        pre_volume = (3.14*(pre_line_len_L*pre_max_radius_L*pre_max_radius_L))
+        # pre_volume = (3.14*(pre_line_len_L*pre_max_radius_L*pre_max_radius_L))
         now_volume = (3.14*(state_matrix[1]*state_matrix[0]*state_matrix[0]))
         # reward = np.log(now_volume) - np.log(pre_volume) #reward为体积差
         reward = now_volume/10000.0 #reward为体积差
@@ -274,6 +278,8 @@ class SpineEnv(gym.Env):
         if max_radius_L < 0.: # todo 仍需要再思考
             line_len_L = 0.01
             state_matrix[1] = 0.01
-        now_volume = (3.14*(state_matrix[1]*state_matrix[0]*state_matrix[0])) 
+        # now_volume = (3.14*(state_matrix[1]*state_matrix[0]*state_matrix[0])) 
+        now_volume = (2*3.14*(state_matrix[1]*state_matrix[0])) 
+         
         state3D_array = self.draw_state(endpoints_L)
         return now_volume, state3D_array, state_matrix[0], state_matrix[1]

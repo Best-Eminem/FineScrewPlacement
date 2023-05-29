@@ -13,10 +13,11 @@ def build_Env(spine_data, degree_threshold, cfg):
     env = SingleSpineEnvSingle.SpineEnv(spine_data, degree_threshold, **cfg)
     return env
 def draw():
-    cfg = {'deg_threshold':[-360., 360., -360., 360.],
-           'reset':{'rdrange':[-90, 90],
+    cfg = {'deg_threshold':[-30., 30., -50., 10.],#[-50., 50., -90., 90.],#[-65., 65., -45., 25.],
+           'screw_index':0,
+           'reset':{'rdrange':[-45, 45],
                     'state_shape':(160, 80, 64)},
-           'step':{'rotate_mag':[5, 5], 'discrete_action':False}
+           'step':{'rotate_mag':[10, 10], 'discrete_action':True}
            }
     dataDirs =  [r'spineData/sub-verse621_L1_ALL_msk.nii.gz']
     pedicle_points = np.asarray([[[35,47,65],[36,47,105]]])
@@ -37,26 +38,26 @@ def draw():
         rewards = []
         step = 0
         x_axis = []
-        while step<100:
+        while step<40:
             step += 1
-            radian_L = np.array([.0, round(0.0-0.05*step, 2)])
-            # radian_L = np.array([round(0.0-0.05*step, 2), .0])
+            # radian_L = np.array([.0, round(0.0-0.05*step, 2)])
+            radian_L = np.array([round(0.0-0.05*step, 2), .0])
             x_axis.append(round(0.0-0.05*step, 2))
-            reward = envs.simulate_volume(radian_L)
+            reward,_,_,_ = envs.simulate_volume(radian_L)
             rewards.append(reward)
         x_axis.reverse()
         rewards.reverse()
         step = 0
-        while step<100:
+        while step<40:
             step += 1
-            radian_L = np.array([.0, round(0.0+0.05*step, 2)])
-            # radian_L = np.array([round(0.0+0.05*step, 2), .0])
+            # radian_L = np.array([.0, round(0.0+0.05*step, 2)])
+            radian_L = np.array([round(0.0+0.05*step, 2), .0])
             x_axis.append(round(0.0+0.05*step, 2))
-            reward = envs.simulate_volume(radian_L)
+            reward,_,_,_  = envs.simulate_volume(radian_L)
             rewards.append(reward)
         print(x_axis)
         print(rewards)
         plt.plot(x_axis, rewards)
         plt.show()
-        plt.savefig('imgs/vertical_plot621L1.png')
+        plt.savefig('imgs/horizon_plot621L1.png')
 draw()
